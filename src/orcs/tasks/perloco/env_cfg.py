@@ -135,7 +135,7 @@ def _resolve(
 
 
 @lru_cache(maxsize=None)
-def _resolve_grail_smpl_seeds(roster_path: str | None, source: str = "grail") -> tuple[Roster, str, int]:
+def _resolve_grail_smpl_seeds(roster_path: str | None, source: str = "grail", sonic_version: str | None = None) -> tuple[Roster, str, int]:
     """The rectangular subset with complete SMPL + kinematic retarget data.
 
     Phase-1 generation is intentionally resumable, so a partial seed dataset
@@ -145,6 +145,11 @@ def _resolve_grail_smpl_seeds(roster_path: str | None, source: str = "grail") ->
     """
     root = staged_root(source)
     requested = load_roster(source, root, roster_path)
+    identity = None
+    if sonic_version is not None:
+        from orcs.core.sonic.runtime import model_info
+        _, model_meta = model_info(sonic_version, "smpl")
+        identity = model_meta["contract_id"]
     ready_by_key: dict[str, tuple[str, ...]] = {}
     lengths: dict[tuple[str, str], int] = {}
 
@@ -155,11 +160,14 @@ def _resolve_grail_smpl_seeds(roster_path: str | None, source: str = "grail") ->
             sample = motion_file.parent
             if keep and sample.name not in keep:
                 continue
-            if not (sample / "smpl_motion.npz").exists() \
-                    or not (sample / "seed_state.npz").exists():
+            seed_file = sample / "seed_state.npz"
+            if sonic_version is not None:
+                from orcs.core.sonic.specs import seed_path
+                seed_file = seed_path(sample, sonic_version)
+            if not (sample / "smpl_motion.npz").exists() or not seed_file.exists():
                 continue
             try:
-                seed = SeedMotion.load(sample / "seed_state.npz")
+                seed = SeedMotion.load(seed_file)
             except (KeyError, OSError, ValueError):
                 # Stale/corrupt seeds are an incomplete generated dataset,
                 # not an import-time package error.  The batch CLI will
@@ -167,7 +175,7 @@ def _resolve_grail_smpl_seeds(roster_path: str | None, source: str = "grail") ->
                 continue
             if source == "grail_stairs":
                 from orcs.core.data.seed_receipt import seed_matches_source
-                if not seed_matches_source(sample):
+                if not seed_matches_source(sample, sonic_version, identity):
                     continue
             with np.load(sample / "smpl_motion.npz") as human:
                 if seed.num_frames != len(human["smpl_joints"]):
@@ -454,6 +462,7 @@ def grail_smpl_env_cfg(
     play: bool = False,
     roster: str | None = None,
     _source: str = "grail",
+    _sonic_version: str | None = None,
     scan_frame: str = "pelvis",
     tile_size: tuple[float, float] = GRAIL_TILE_SIZE,
     num_steps_per_env: int = 24,
@@ -468,7 +477,7 @@ def grail_smpl_env_cfg(
     ``seed_state.npz`` supplies the reset state and initial action history; the
     upstream GRAIL robot retarget is not a teacher trajectory.
     """
-    r, motion_file, max_len = _resolve_grail_smpl_seeds(roster, _source)
+    r, motion_file, max_len = _resolve_grail_smpl_seeds(roster, _source, _sonic_version)
     cfg = _core(
         _source,
         r,
@@ -523,7 +532,7 @@ def _play_overrides(cfg: ManagerBasedRlEnvCfg) -> None:
 
 
 def grail_stairs_env_cfg(*, play: bool = False, roster: str | None = None,
-                         command_space: str = "robot") -> ManagerBasedRlEnvCfg:
+                         command_space: str = "robot", sonic_version: str = "release") -> ManagerBasedRlEnvCfg:
     from orcs.tasks.perloco.terrain import staged_tile_size
     root = staged_root("grail_stairs")
     import json
@@ -531,11 +540,13 @@ def grail_stairs_env_cfg(*, play: bool = False, roster: str | None = None,
     if report.get("failed") or report.get("status") != "complete":
         raise FileNotFoundError(f"stair staging incomplete; inspect {root / 'stage_report.json'}")
     roster = roster or str(root / "roster.toml")
-    return grail_env_cfg(play=play, roster=roster, command_space=command_space,
+    from orcs.core.sonic.runtime import configure_env
+    cfg = grail_env_cfg(play=play, roster=roster, command_space=command_space,
                          _source="grail_stairs", tile_size=staged_tile_size(root))
+    return configure_env(cfg, sonic_version, "smpl" if command_space == "smpl" else "g1")
 
 
-def grail_stairs_smpl_env_cfg(*, play: bool = False, roster: str | None = None) -> ManagerBasedRlEnvCfg:
+def grail_stairs_smpl_env_cfg(*, play: bool = False, roster: str | None = None, sonic_version: str = "release") -> ManagerBasedRlEnvCfg:
     from orcs.tasks.perloco.terrain import staged_tile_size
     root = staged_root("grail_stairs")
     import json
@@ -543,5 +554,7 @@ def grail_stairs_smpl_env_cfg(*, play: bool = False, roster: str | None = None) 
     if report.get("failed") or report.get("status") != "complete":
         raise FileNotFoundError(f"stair staging incomplete; inspect {root / 'stage_report.json'}")
     roster = roster or str(root / "roster.toml")
-    return grail_smpl_env_cfg(play=play, roster=roster, _source="grail_stairs",
-                              tile_size=staged_tile_size(root))
+    from orcs.core.sonic.runtime import configure_env
+    cfg = grail_smpl_env_cfg(play=play, roster=roster, _source="grail_stairs",
+                              _sonic_version=sonic_version, tile_size=staged_tile_size(root))
+    return configure_env(cfg, sonic_version, "smpl")

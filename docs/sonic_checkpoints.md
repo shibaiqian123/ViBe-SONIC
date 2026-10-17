@@ -48,49 +48,58 @@ snapshot commit (or user-declared local provenance). They never claim that
 resolution validates model semantics or training compatibility. Resolving weights
 therefore requires write access for receipts, even in offline mode.
 
-## Optional original-release conversion
+## Three-variant stair integration
+
+The native ORCS converter (`core/sonic/port.py`) supports all three variants. It pins
+snapshot `6733128a3d8a523b1418b06bca3cdf61c8b0987f` by default and verifies the
+published SHA-256 of each training checkpoint before loading. Unknown custom
+weights are rejected, even if their shapes match. mocke/rsl_rl are unchanged.
 
 ```bash
 orcs-sonic-checkpoint --version release --convert --smpl
-
-# Reuse a local original-release file; keep output separate.
-orcs-sonic-checkpoint --version release --ckpt /data/original/last.pt \
-  --convert --smpl --out-dir /data/experiments/sonic-release-port
+orcs-sonic-checkpoint --version v1.1 --convert --smpl
+orcs-sonic-checkpoint --version low-latency --convert --smpl
 ```
 
-The command locates `scripts/port_sonic_checkpoint.py` in the installed `mocke`
-checkout without importing `mocke`, then runs it with explicit input/output
-paths. Missing conversion code fails with setup guidance; no dependency is
-modified automatically. The existing converter's checks remain in force.
-Conversion subprocesses run with Hugging Face offline mode enabled.
+Outputs remain version-isolated; `parity.json` records source/remapped network
+checks. Layer discovery is dynamic and unsupported control parameters fail
+closed. Base encoder and decoder weights stay frozen; only decoder adapters train.
+The v1.1 reference orientation is robot-heading-relative. Low latency uses a
+10-frame G1 window at 0.02 s and 4-frame SMPL window at 0.02 s. All variants retain
+10-frame proprioception and 50 Hz control. Changes are opt-in to stair tasks only.
 
-Default output:
-
-```text
-$ORCS_DEPS_ROOT/checkpoints/sonic/release/ported/
-├── last_ported.pt
-├── smpl_ported.pt       # only with --smpl
-└── conversion.json
-```
-
-An existing output or conversion lock is never overwritten. Use a new output
-directory for another run. Failed conversions do not publish partial model
-files. `conversion.json` records source and converter checksums plus output
-checksums. An interrupted process may leave `.convert.lock`; inspect the directory
-and confirm no converter is running before manually recovering it.
-
-`--smpl` and `--out-dir` require `--convert`. Requests to convert `v1.1` or
-`low-latency` are rejected before fetching weights or writing outputs: their
-observation/window/runtime contracts are not yet adapted. No force bypass is
-provided. The script does not fetch a planner or ONNX deployment models.
-
-The equivalent checkout entry point is:
+New task suffixes are `-V11`, `-V11-Smpl`, `-LowLatency`, and `-LowLatency-Smpl`
+on `Orcs-PerLoco-GrailStairs-AdaptSonic`. Existing task names still select release,
+with legacy mocke release checkpoint fallback. Resume rejects different version,
+mode or base-weight fingerprints. An untagged legacy release training checkpoint
+is accepted only when every frozen parameter matches the selected base exactly.
 
 ```bash
-bash scripts/setup/sonic_checkpoint.sh --version v1.1 --local-files-only
+orcs-pseudo-retarget --scene perloco-grail-stairs --sonic-version v1.1 --all
+orcs-view-seeds --scene perloco-grail-stairs --sonic-version v1.1 --source /actual/sample
+play Orcs-PerLoco-GrailStairs-AdaptSonic-V11-Smpl --agent initial
+train Orcs-PerLoco-GrailStairs-AdaptSonic-V11-Smpl --env.scene.num-envs 64
 ```
 
-This feature does not change `core/rl.py` or make existing tasks automatically
-load these outputs. Runtime model selection and compatibility validation remain
-separate work. Local tests use fake weights/cache and do not certify any real
-checkpoint conversion or hardware behavior.
+Release seeds keep `seed_state.npz`; other variants use
+`seeds/<version>/seed_state.npz`. Receipts include model provenance. Old stair
+seeds lacking model provenance must be regenerated; other tasks are unaffected.
+
+`tests/verify_official_sonic_onnx.py` compares the cached official ONNX graphs to
+the ORCS remapping on CPU. It does not create training weights or substitute for
+last.pt verification. The pinned low-latency ONNX actually packs single-frame
+orientation before multi-frame orientation, unlike its published observation YAML;
+the verifier reports and respects the graph layout. ORCS constructs branch-level
+features directly and does not use that all-mode deployment packing.
+
+Real reset/step and short PPO acceptance still require staged stairs, matching
+seeds and a complete MJLab/assets environment. Numerical parity is not evidence
+of terrain success, convergence or hardware readiness.
+
+Conversion runs in a temporary output directory and publishes only after all
+checks pass. Existing results are not overwritten. `--smpl` and `--out-dir`
+require `--convert`. A missing explicit `--ckpt` never falls back to downloading.
+The shell entry point remains `bash scripts/setup/sonic_checkpoint.sh`.
+
+See the [dated validation record](validation/sonic_variants_2026-10-17.md) for
+actual numerical results and the remaining physics/PPO acceptance work.

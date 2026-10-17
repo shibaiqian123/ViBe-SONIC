@@ -69,17 +69,23 @@ def _selected_grail_samples(source: str = "grail") -> list[Path]:
     return samples
 
 
-def _seed_is_complete(sample: Path) -> bool:
+def _seed_is_complete(sample: Path, sonic_version: str | None = None) -> bool:
     """Whether a resumable batch may safely skip this sample."""
     try:
-        seed = SeedMotion.load(sample / "seed_state.npz")
+        from orcs.core.sonic.specs import seed_path
+        seed = SeedMotion.load(seed_path(sample, sonic_version or "release"))
         with np.load(sample / "smpl_motion.npz") as source:
             num_source_frames = int(source["smpl_joints"].shape[0])
     except (FileNotFoundError, KeyError, OSError, ValueError):
         return False
     if "grail_stairs" in sample.parts:
         from orcs.core.data.seed_receipt import seed_matches_source
-        if not seed_matches_source(sample):
+        identity = None
+        if sonic_version is not None:
+            from orcs.core.sonic.runtime import model_info
+            _, meta = model_info(sonic_version, "smpl")
+            identity = meta['contract_id']
+        if not seed_matches_source(sample, sonic_version, identity):
             return False
     return seed.num_frames == num_source_frames and bool(seed.valid.all())
 
@@ -115,11 +121,12 @@ def _object_seed_is_complete(sample: Path) -> bool:
     return seed.object_pos_w is not None and not source_is_newer
 
 
-def _run_grail_batch(*, device: str | None, overwrite: bool, source: str = "grail") -> None:
+def _run_grail_batch(*, device: str | None, overwrite: bool, source: str = "grail", sonic_version: str = "release") -> None:
     """Retarget the full roster in one vectorized mjlab rollout."""
     samples = _selected_grail_samples(source)
+    version = sonic_version if source == "grail_stairs" else None
     pending = [
-        sample for sample in samples if overwrite or not _seed_is_complete(sample)
+        sample for sample in samples if overwrite or not _seed_is_complete(sample, version)
     ]
     skipped = len(samples) - len(pending)
     print(
@@ -131,7 +138,7 @@ def _run_grail_batch(*, device: str | None, overwrite: bool, source: str = "grai
         return
 
     run_device = device or ("cuda:0" if torch.cuda.is_available() else "cpu")
-    failures = _run_grail_vectorized(pending, device=run_device, source=source)
+    failures = _run_grail_vectorized(pending, device=run_device, source=source, sonic_version=sonic_version)
 
     # A bad reconstruction should not throw away a successful vectorized
     # corpus.  Retry only the exceptional worlds in isolation so their full
@@ -148,11 +155,11 @@ def _run_grail_batch(*, device: str | None, overwrite: bool, source: str = "grai
             "--source",
             str(sample),
         ]
-        command.extend(("--device", run_device))
+        command.extend(("--device", run_device, "--sonic-version", sonic_version))
         if subprocess.run(command, check=False).returncode != 0:
             retry_failures.append(sample)
 
-    complete = sum(_seed_is_complete(sample) for sample in samples)
+    complete = sum(_seed_is_complete(sample, version) for sample in samples)
     print(
         f"\n[kinematic-retarget] complete={complete}/{len(samples)}, "
         f"failed={len(retry_failures)}"
@@ -164,7 +171,7 @@ def _run_grail_batch(*, device: str | None, overwrite: bool, source: str = "grai
         raise SystemExit(1)
 
 
-def _run_grail_vectorized(samples: list[Path], *, device: str, source: str = "grail") -> list[Path]:
+def _run_grail_vectorized(samples: list[Path], *, device: str, source: str = "grail", sonic_version: str = "release") -> list[Path]:
     """Run one pending GRAIL sample per mjlab environment.
 
     Clip lengths are ragged: completed worlds hold their last source frame
@@ -174,7 +181,7 @@ def _run_grail_vectorized(samples: list[Path], *, device: str, source: str = "gr
 
     if source == "grail_stairs":
         from orcs.tasks.perloco.env_cfg import grail_stairs_env_cfg
-        cfg = grail_stairs_env_cfg(command_space="smpl", play=True)
+        cfg = grail_stairs_env_cfg(command_space="smpl", play=True, sonic_version=sonic_version)
     else:
         cfg = grail_env_cfg(agent="sonic", command_space="smpl", play=True, roster=None)
     cfg.scene.num_envs = len(samples)
@@ -226,9 +233,13 @@ def _run_vectorized_corpus(
     if len(samples) != len(loader_samples):
         raise ValueError("output and loader sample counts differ")
     raw_env = ManagerBasedRlEnv(cfg=cfg, device=device, render_mode=None)
-    agent_cfg = adapt_sonic_agent_cfg(
-        "orcs_pseudo_retarget", base_checkpoint=SMPL_CKPT
-    )
+    version = getattr(cfg.commands['motion'], 'sonic_version', None)
+    identity = getattr(cfg.commands['motion'], 'sonic_contract_id', None)
+    if version is not None:
+        from orcs.core.sonic.runtime import agent_cfg as versioned_agent
+        agent_cfg = versioned_agent(version, "smpl", "orcs_pseudo_retarget")
+    else:
+        agent_cfg = adapt_sonic_agent_cfg("orcs_pseudo_retarget", base_checkpoint=SMPL_CKPT)
     env = RslRlVecEnvWrapper(raw_env, clip_actions=agent_cfg.clip_actions)
     runner = MjlabOnPolicyRunner(env, asdict(agent_cfg), device=device)
     policy = runner.get_inference_policy(device=device)
@@ -328,9 +339,10 @@ def _run_vectorized_corpus(
                 capture_steps=capture_steps,
                 env_id=env_id,
             )
-            seed.save(sample / "seed_state.npz")
+            from orcs.core.sonic.specs import seed_path
+            seed.save(seed_path(sample, version or "release"))
             from orcs.core.data.seed_receipt import write_seed_receipt
-            write_seed_receipt(sample)
+            write_seed_receipt(sample, version, identity)
             if not seed.valid.all():
                 failed.append(sample)
 
@@ -633,6 +645,7 @@ def _build_cfg(
     flat_root: Path | None,
     stack: ExitStack,
     motion_set: str | None = None,
+    sonic_version: str = "release",
 ):
     if scene == "uolm":
         from orcs.assets import reconstructed_object_entity_cfg, table_entity_cfg
@@ -673,7 +686,7 @@ def _build_cfg(
         roster = _grail_roster(sample, stack, source)
         if source == "grail_stairs":
             from orcs.tasks.perloco.env_cfg import grail_stairs_env_cfg
-            cfg = grail_stairs_env_cfg(command_space="smpl", play=True, roster=roster)
+            cfg = grail_stairs_env_cfg(command_space="smpl", play=True, roster=roster, sonic_version=sonic_version)
         else:
             cfg = grail_env_cfg(agent="sonic", command_space="smpl", play=True, roster=roster)
         object_name = None
@@ -910,9 +923,13 @@ def _run(
     from orcs.core.rl import SMPL_CKPT, adapt_sonic_agent_cfg
 
     raw_env = ManagerBasedRlEnv(cfg=cfg, device=device, render_mode=None)
-    agent_cfg = adapt_sonic_agent_cfg(
-        "orcs_pseudo_retarget", base_checkpoint=SMPL_CKPT
-    )
+    version = getattr(cfg.commands['motion'], 'sonic_version', None)
+    identity = getattr(cfg.commands['motion'], 'sonic_contract_id', None)
+    if version is not None:
+        from orcs.core.sonic.runtime import agent_cfg as versioned_agent
+        agent_cfg = versioned_agent(version, "smpl", "orcs_pseudo_retarget")
+    else:
+        agent_cfg = adapt_sonic_agent_cfg("orcs_pseudo_retarget", base_checkpoint=SMPL_CKPT)
     env = RslRlVecEnvWrapper(raw_env, clip_actions=agent_cfg.clip_actions)
     runner = MjlabOnPolicyRunner(env, asdict(agent_cfg), device=device)
     policy = runner.get_inference_policy(device=device)
@@ -969,9 +986,10 @@ def _run(
             capture_steps=capture_steps,
         )
         seed.save(output)
-        if output.resolve() == (sample / "seed_state.npz").resolve():
+        from orcs.core.sonic.specs import seed_path
+        if output.resolve() == seed_path(sample, version or "release").resolve():
             from orcs.core.data.seed_receipt import write_seed_receipt
-            write_seed_receipt(sample)
+            write_seed_receipt(sample, version, identity)
         return seed
     finally:
         raw_env.close()
@@ -1014,8 +1032,11 @@ def main() -> None:
         "--z-up", action="store_true", help="raw SONIC pose/transl are already z-up"
     )
     parser.add_argument("--output", type=Path, default=None)
+    parser.add_argument("--sonic-version", choices=("release", "v1.1", "low-latency"), default="release")
     parser.add_argument("--device", default=None)
     args = parser.parse_args()
+    if args.scene != "perloco-grail-stairs" and args.sonic_version != "release":
+        parser.error("version selection applies only to perloco-grail-stairs")
 
     if args.all_data:
         if args.source is not None or args.output is not None or args.object is not None:
@@ -1024,7 +1045,8 @@ def main() -> None:
             if args.motion_set is not None:
                 parser.error("--motion-set is only valid with --scene uolm")
             _run_grail_batch(device=args.device, overwrite=args.overwrite,
-                             source="grail_stairs" if args.scene == "perloco-grail-stairs" else "grail")
+                             source="grail_stairs" if args.scene == "perloco-grail-stairs" else "grail",
+                             sonic_version=args.sonic_version)
         else:
             motion_sets = (
                 (args.motion_set,)
@@ -1061,12 +1083,13 @@ def main() -> None:
         if args.scene == "uolm":
             flat_root, _ = stack.enter_context(_isolated_flat_dataset(sample))
         cfg, object_name = _build_cfg(
-            args.scene, sample, flat_root, stack, motion_set=args.motion_set
+            args.scene, sample, flat_root, stack, motion_set=args.motion_set, sonic_version=args.sonic_version
         )
         if args.output is not None:
             output = args.output.expanduser().resolve()
         elif not temporary:
-            output = sample / "seed_state.npz"
+            from orcs.core.sonic.specs import seed_path
+            output = seed_path(sample, args.sonic_version)
         else:
             output = Path.cwd() / "seed_state.npz"
         seed = _run(

@@ -106,6 +106,9 @@ class TerrainMotionCommand(MultiClipMotionCommand):
             self.cfg.dataset_dir, self.device, motion_files=motion_files)
 
     def _init_task(self) -> None:
+        if self.cfg.sonic_version is not None:
+            from orcs.core.sonic.runtime import check_robot_order
+            check_robot_order(self.robot)
         terrain = self._env.scene.terrain
         if terrain is None or getattr(terrain, "terrain_levels", None) is None:
             raise ValueError(
@@ -187,6 +190,8 @@ class SmplSeedTerrainMotionCommand(TerrainMotionCommand):
             joint_names=tuple(self.robot.joint_names),
             body_names=tuple(self.cfg.body_names),
             expected_fps=1.0 / self._env.step_dt,
+            sonic_version=self.cfg.sonic_version,
+            sonic_contract_id=self.cfg.sonic_contract_id,
         )
 
     def _init_task(self) -> None:
@@ -373,6 +378,8 @@ class TerrainMotionCommandCfg(MultiClipMotionCommandCfg):
     a staged directory.
     """
 
+    sonic_version: str | None = None
+    sonic_contract_id: str | None = None
     tile_keys: tuple[str, ...] = ()
     n_rows: int = 1
     clips: dict[str, tuple[str, ...]] = field(default_factory=dict)

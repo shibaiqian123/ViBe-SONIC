@@ -99,14 +99,14 @@ def test_offline_cache_miss_propagates(monkeypatch):
 
 
 @pytest.mark.parametrize('version', ['v1.1', 'low-latency'])
-def test_unadapted_conversion_rejected_before_any_io(tmp_path, monkeypatch, version):
+def test_missing_torch_conversion_rejected_before_any_io(tmp_path, monkeypatch, version):
     def fail(*a, **kw):
         raise AssertionError('should not resolve/download/import converter')
     monkeypatch.setattr(cli, 'resolve_checkpoint', fail)
-    monkeypatch.setattr(cli, 'find_converter', fail)
+    monkeypatch.setattr(cli.importlib.util, 'find_spec', lambda name: None)
     with pytest.raises(SystemExit) as exc:
         cli.main(['--version', version, '--convert', '--out-dir', str(tmp_path / 'output')])
-    assert exc.value.code == 2
+    assert exc.value.code == 1
     assert list(tmp_path.iterdir()) == []
 
 
@@ -210,7 +210,10 @@ def test_main_conversion_failure_preserves_exit_status(tmp_path, monkeypatch):
     from orcs.core import paths
     script, ckpt = converter_fixture(tmp_path, fail=True)
     monkeypatch.setattr(paths, 'DEPS_ROOT', tmp_path / 'deps')
-    monkeypatch.setattr(cli, 'find_converter', lambda: script)
+    monkeypatch.setattr(cli.importlib.util, 'find_spec', lambda name: object())
+    def fail_conversion(*a, **kw):
+        raise subprocess.CalledProcessError(7, ['native-converter'])
+    monkeypatch.setattr(cli, 'convert_checkpoint', fail_conversion)
     with pytest.raises(SystemExit) as exc:
         cli.main(['--ckpt', str(ckpt), '--convert'])
     assert exc.value.code == 7
@@ -249,3 +252,36 @@ def test_wheel_packages_and_resolves_console_entry(tmp_path):
                             env={**os.environ, 'PYTHONPATH': str(site), 'PYTHONDONTWRITEBYTECODE': '1'},
                             check=True, capture_output=True, text=True)
     assert 'low-latency' in result.stdout
+
+
+def test_native_publication_checks_source_identity(tmp_path, monkeypatch):
+    script, ckpt = converter_fixture(tmp_path)
+    def simulate_native(command, **kwargs):
+        assert command[1:3] == ['-m', 'orcs.core.sonic.port']
+        assert kwargs['env']['HF_HUB_OFFLINE'] == '1'
+        out = Path(command[command.index('--out-dir') + 1])
+        (out / 'last_ported.pt').write_bytes(b'ported')
+        (out / 'parity.json').write_text(json.dumps({'version': 'v1.1', 'source_sha256': 'wrong'}))
+    monkeypatch.setattr(cli.subprocess, 'run', simulate_native)
+    output = tmp_path / 'result'
+    with pytest.raises(RuntimeError, match='provenance'):
+        cli.convert_checkpoint(script, ckpt, output, smpl=False,
+                               receipt={'sha256': 'expected'}, version='v1.1')
+    assert list(output.iterdir()) == []
+
+
+@pytest.mark.parametrize('version', ['release', 'v1.1', 'low-latency'])
+def test_native_publication_records_verified_version(tmp_path, monkeypatch, version):
+    script, ckpt = converter_fixture(tmp_path)
+    def simulate_native(command, **kwargs):
+        assert command[command.index('--version') + 1] == version
+        out = Path(command[command.index('--out-dir') + 1])
+        (out / 'last_ported.pt').write_bytes(b'ported')
+        (out / 'smpl_ported.pt').write_bytes(b'smpl')
+        (out / 'parity.json').write_text(json.dumps({'version': version, 'source_sha256': 'expected'}))
+    monkeypatch.setattr(cli.subprocess, 'run', simulate_native)
+    output = tmp_path / 'result'
+    cli.convert_checkpoint(script, ckpt, output, smpl=True,
+                           receipt={'sha256': 'expected'}, version=version)
+    assert json.loads((output / 'conversion.json').read_text())['verified_sonic_version'] == version
+    assert (output / 'parity.json').exists()

@@ -37,6 +37,7 @@ from functools import partial
 
 from orcs.core.registry import register_all
 from orcs.core.rl import SMPL_CKPT, adapt_sonic_agent_cfg, tara_agent_cfg
+from orcs.core.sonic.runtime import agent_cfg as _versioned_agent
 from orcs.tasks.perloco.env_cfg import (
     grail_env_cfg,
     grail_smpl_env_cfg,
@@ -50,11 +51,12 @@ from orcs.tasks.perloco.env_cfg import (
 # factories arrive pre-bound, so this table has no per-task branch to grow.
 _smpl_sonic = partial(adapt_sonic_agent_cfg, base_checkpoint=SMPL_CKPT)
 
+
 _TASKS = (
     ("Orcs-PerLoco-GrailStairs-AdaptSonic", grail_stairs_env_cfg,
-     partial(adapt_sonic_agent_cfg, "orcs_perloco_grail_stairs")),
+     partial(_versioned_agent, "release", "g1", "orcs_perloco_grail_stairs")),
     ("Orcs-PerLoco-GrailStairs-AdaptSonic-Smpl", grail_stairs_smpl_env_cfg,
-     partial(_smpl_sonic, "orcs_perloco_grail_stairs_smpl")),
+     partial(_versioned_agent, "release", "smpl", "orcs_perloco_grail_stairs_smpl")),
     ("Orcs-PerLoco-OmRe-AdaptSonic",
      partial(omni_env_cfg, agent="sonic"),
      partial(adapt_sonic_agent_cfg, "orcs_perloco_omre")),
@@ -71,6 +73,16 @@ _TASKS = (
      partial(grail_env_cfg, agent="tara"),
      partial(tara_agent_cfg, "orcs_perloco_grail_tara")),
 )
+
+for _version, _suffix in (("v1.1", "V11"), ("low-latency", "LowLatency")):
+    _TASKS += (
+        (f"Orcs-PerLoco-GrailStairs-AdaptSonic-{_suffix}",
+         partial(grail_stairs_env_cfg, sonic_version=_version),
+         partial(_versioned_agent, _version, "g1", f"orcs_stairs_{_suffix}")),
+        (f"Orcs-PerLoco-GrailStairs-AdaptSonic-{_suffix}-Smpl",
+         partial(grail_stairs_smpl_env_cfg, sonic_version=_version),
+         partial(_versioned_agent, _version, "smpl", f"orcs_stairs_{_suffix}_smpl")),
+    )
 
 SKIP_REASON: dict[str, str] = register_all(_TASKS)
 """{task_id: why it could not register}. Empty when every task registered."""

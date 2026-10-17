@@ -15,18 +15,36 @@ def source_digest(sample: Path) -> str:
     return h.hexdigest()
 
 
-def write_seed_receipt(sample: Path) -> None:
+def write_seed_receipt(sample: Path, version: str | None = None, identity: str | None = None) -> None:
     if not (sample / "smpl_motion.npz").exists():
         return
     if not (sample.parent / "tile.json").exists():
         return
     receipt = {"source_sha256": source_digest(sample)}
-    (sample / "seed_source.json").write_text(json.dumps(receipt) + "\n")
+    destination = sample / "seed_source.json"
+    if version is not None:
+        from orcs.core.sonic.runtime import model_info
+        from orcs.core.sonic.specs import CONTRACT_VERSION, seed_path
+        _, model_meta = model_info(version, "smpl")
+        if identity != model_meta['contract_id']:
+            raise ValueError("seed generator used a different SONIC model contract")
+        receipt.update(sonic_version=version, contract_id=identity,
+                       base_sha256=model_meta['source_sha256'], observation_version=CONTRACT_VERSION)
+        destination = seed_path(sample, version).with_name('seed_source.json')
+        destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(json.dumps(receipt) + "\n")
 
 
-def seed_matches_source(sample: Path) -> bool:
+def seed_matches_source(sample: Path, version: str | None = None, identity: str | None = None) -> bool:
     try:
-        receipt = json.loads((sample / "seed_source.json").read_text())
+        path = sample / "seed_source.json"
+        if version is not None:
+            from orcs.core.sonic.specs import seed_path
+            path = seed_path(sample, version).with_name('seed_source.json')
+        receipt = json.loads(path.read_text())
+        if version is not None and (receipt.get('sonic_version') != version or
+                                    not identity or receipt.get('contract_id') != identity):
+            return False
         return receipt["source_sha256"] == source_digest(sample)
     except (OSError, ValueError, KeyError):
         return False

@@ -54,6 +54,8 @@ class SeededSmplMotionLoader(ConcatMotionLoader):
         joint_names: tuple[str, ...],
         body_names: tuple[str, ...],
         expected_fps: float,
+        sonic_version: str | None = None,
+        sonic_contract_id: str | None = None,
     ) -> None:
         self.device = device
         self.motion_files = list(motion_files)
@@ -78,6 +80,12 @@ class SeededSmplMotionLoader(ConcatMotionLoader):
         for motion_file in self.motion_files:
             sample = Path(motion_file).parent
             seed_path = sample / "seed_state.npz"
+            if sonic_version is not None:
+                from orcs.core.data.seed_receipt import seed_matches_source
+                from orcs.core.sonic.specs import seed_path as versioned_seed_path
+                seed_path = versioned_seed_path(sample, sonic_version)
+                if not seed_matches_source(sample, sonic_version, sonic_contract_id):
+                    raise ValueError(f"stale or wrong-version seed: {seed_path}")
             smpl_path = sample / "smpl_motion.npz"
             if not seed_path.exists():
                 raise FileNotFoundError(f"{sample}: missing seed_state.npz")

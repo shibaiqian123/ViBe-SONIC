@@ -156,6 +156,7 @@ use this repository in your research, please consider citing:
 ## SONIC checkpoint selection
 
 Locate official release/v1.1/low-latency weights from existing server files or
-Hugging Face cache with `orcs-sonic-checkpoint`. Original-release conversion is
-optional; v1.1/low-latency runtime adaptation is not included.
+Hugging Face cache with `orcs-sonic-checkpoint`. Version-aware conversion and
+frozen-base LoRA integration are available for the GRAIL stair tasks; other
+tasks retain their existing release behavior.
 See [usage](docs/sonic_checkpoints.md) / [中文说明](docs/sonic_checkpoints_cn.md).

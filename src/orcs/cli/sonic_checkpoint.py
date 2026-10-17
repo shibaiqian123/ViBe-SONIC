@@ -1,6 +1,6 @@
 """Locate official SONIC weights without loading models or discovering tasks.
 
-Only the original release can currently be passed to mocke's porting script.
+All three versions use the ORCS native, contract-checked converter.
 Resolving a filename is not proof of runtime compatibility or model identity.
 """
 from __future__ import annotations
@@ -31,15 +31,13 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--cache-dir", type=Path, help="Hugging Face cache directory")
     result.add_argument("--local-files-only", action="store_true", help="never access network for weights")
     result.add_argument("--revision", help="Hugging Face branch/tag/commit (SDK default when omitted)")
-    result.add_argument("--convert", action="store_true", help="port original release through installed mocke")
+    result.add_argument("--convert", action="store_true", help="port selected SONIC version with contract and numerical checks")
     result.add_argument("--smpl", action="store_true", help="also port SMPL encoder; requires --convert")
     result.add_argument("--out-dir", type=Path, help="conversion directory; existing outputs are never replaced")
     return result
 
 
 def validate_args(args: argparse.Namespace, cli: argparse.ArgumentParser) -> None:
-    if args.convert and args.version != "release":
-        cli.error(f"{args.version}: 当前转换器尚未验证兼容; only weight resolution is supported")
     if args.smpl and not args.convert:
         cli.error("--smpl requires --convert")
     if args.out_dir is not None and not args.convert:
@@ -157,7 +155,7 @@ def save_source_receipt(root: Path, receipt: dict) -> Path:
 
 
 def convert_checkpoint(script: Path, checkpoint: Path, out_dir: Path,
-                       *, smpl: bool, receipt: dict) -> None:
+                       *, smpl: bool, receipt: dict, version: str | None = None) -> None:
     preflight_output(out_dir, smpl)
     if not checkpoint.is_file():
         raise FileNotFoundError(f"Checkpoint disappeared before conversion: {checkpoint}")
@@ -170,19 +168,28 @@ def convert_checkpoint(script: Path, checkpoint: Path, out_dir: Path,
         with tempfile.TemporaryDirectory(prefix=".conversion-", dir=out_dir) as temporary:
             temp = Path(temporary)
             output = temp / "last_ported.pt"
-            command = [sys.executable, str(script), "--ckpt", str(checkpoint), "--out", str(output)]
+            command = ([sys.executable, "-m", "orcs.core.sonic.port", "--version", version,
+                        "--ckpt", str(checkpoint), "--out-dir", str(temp)] if version is not None else
+                       [sys.executable, str(script), "--ckpt", str(checkpoint), "--out", str(output)])
             if smpl:
                 command.append("--smpl")
             # Resolution is complete. The converter must never invoke its legacy downloader.
             subprocess.run(command, check=True, env={**os.environ, "HF_HUB_OFFLINE": "1"})
             names = ["last_ported.pt"] + (["smpl_ported.pt"] if smpl else [])
+            if version is not None:
+                names.append("parity.json")
             for name in names:
                 if not (temp / name).is_file() or (temp / name).stat().st_size == 0:
                     raise RuntimeError(f"Converter did not produce a nonempty {name}")
             conversion = {"source": receipt, "converter_path": str(script),
                           "converter_sha256": sha256(script),
-                          "validation": "upstream_converter_completed; not a hardware/runtime validation",
+                          "validation": "native_contract_and_numerical_checks_completed; not physics validation" if version is not None else "upstream_converter_completed; not physics validation",
                           "outputs": {name: sha256(temp / name) for name in names}}
+            if version is not None:
+                parity = json.loads((temp / "parity.json").read_text())
+                if parity.get("version") != version or parity.get("source_sha256") != receipt.get("sha256"):
+                    raise RuntimeError("native converter provenance differs from resolved source")
+                conversion["verified_sonic_version"] = version
             (temp / "conversion.json").write_text(json.dumps(conversion, indent=2) + "\n")
             for name in [*names, "conversion.json"]:
                 dest = out_dir / name
@@ -207,7 +214,14 @@ def main(argv: list[str] | None = None) -> None:
     out_dir = (args.out_dir.expanduser().resolve() if args.out_dir else version_root / "ported")
     try:
         # Validate conversion support and availability BEFORE acquiring a checkpoint.
-        script = find_converter() if args.convert else None
+        script = None
+        if args.convert:
+            if importlib.util.find_spec("torch") is None:
+                raise RuntimeError("Conversion requires PyTorch in the server training environment")
+            script = Path(__file__).parents[1] / "core" / "sonic" / "port.py"
+            if args.revision is None and args.ckpt is None:
+                from orcs.core.sonic.specs import REVISION
+                args.revision = REVISION
         if script:
             preflight_output(out_dir, args.smpl)
         checkpoint, receipt = resolve_checkpoint(args)
@@ -217,7 +231,7 @@ def main(argv: list[str] | None = None) -> None:
         print(f"[SONIC] revision={receipt['resolved_revision'] or 'local file; version is user-declared, not verified'}")
         print(f"[SONIC] source receipt={receipt_file}")
         if script:
-            convert_checkpoint(script, checkpoint, out_dir, smpl=args.smpl, receipt=receipt)
+            convert_checkpoint(script, checkpoint, out_dir, smpl=args.smpl, receipt=receipt, version=args.version)
             print(f"[SONIC] converted outputs={out_dir}")
         else:
             print("[SONIC] weights located; runtime/training compatibility has not been verified")

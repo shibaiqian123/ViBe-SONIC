@@ -119,8 +119,11 @@ def main() -> None:
     )
     parser.add_argument("--object", default=None)
     parser.add_argument("--z-up", action="store_true")
+    parser.add_argument("--sonic-version", choices=("release", "v1.1", "low-latency"), default="release")
     parser.add_argument("--port", type=int, default=8080)
     args = parser.parse_args()
+    if args.scene != "perloco-grail-stairs" and args.sonic_version != "release":
+        parser.error("version selection applies only to perloco-grail-stairs")
 
     if args.source is None and args.seed is None:
         parser.error("provide either --source or --seed")
@@ -151,7 +154,8 @@ def main() -> None:
         if seed is None and temporary:
             parser.error("a raw source requires --seed")
         if seed is None:
-            seed = SeedMotion.load(sample / "seed_state.npz")
+            from orcs.core.sonic.specs import seed_path
+            seed = SeedMotion.load(seed_path(sample, args.sonic_version))
         with np.load(sample / "smpl_motion.npz") as d:
             smpl = d["smpl_joints_viz_w"].astype(np.float32)
         source_object_pos = source_object_quat = None
@@ -169,8 +173,17 @@ def main() -> None:
         if args.scene == "uolm":
             flat_root, _ = stack.enter_context(_isolated_flat_dataset(sample))
         cfg, object_name = _build_cfg(
-            args.scene, sample, flat_root, stack, motion_set=motion_set
+            args.scene, sample, flat_root, stack, motion_set=motion_set, sonic_version=args.sonic_version
         )
+
+        if args.scene == "perloco-grail-stairs":
+            from orcs.core.data.seed_receipt import seed_matches_source
+            from orcs.core.sonic.specs import seed_path
+            expected_seed = seed_path(sample, args.sonic_version).resolve()
+            if args.seed is not None and args.seed.expanduser().resolve() != expected_seed:
+                parser.error(f"selected version expects seed at {expected_seed}")
+            if not seed_matches_source(sample, args.sonic_version, cfg.commands['motion'].sonic_contract_id):
+                parser.error("seed provenance does not match selected SONIC version/source")
 
         from mjlab.envs import ManagerBasedRlEnv
 

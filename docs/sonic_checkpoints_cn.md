@@ -44,43 +44,64 @@ $ORCS_DEPS_ROOT/checkpoints/sonic/<version>/sources/
 即使处于离线模式，也需要具备写入来源记录目录的权限。
 “已找到权重”不代表模型版本语义或训练兼容性已验证。
 
-## 可选：转换原始 release
+## 三版本楼梯适配
+
+转换现由 ORCS 的 `core/sonic/port.py` 完成，无需修改 mocke 或 rsl_rl。
+转换默认固定官方快照 `6733128a3d8a523b1418b06bca3cdf61c8b0987f`，并核对三个官方
+`last.pt` 的 SHA-256。仅结构相同或文件名相同不算匹配；其他版本/自定义权重会明确拒绝。
 
 ```bash
 orcs-sonic-checkpoint --version release --convert --smpl
-
-orcs-sonic-checkpoint --version release --ckpt /data/original/last.pt \
-  --convert --smpl --out-dir /data/experiments/sonic-release-port
+orcs-sonic-checkpoint --version v1.1 --convert --smpl
+orcs-sonic-checkpoint --version low-latency --convert --smpl
 ```
 
-入口定位已安装 `mocke` checkout 中的 `scripts/port_sonic_checkpoint.py`，
-显式传入已有输入文件和输出路径，保留原转换器的检查。
-找不到脚本时会提示准备依赖，不会自动修改 `mocke`。转换子进程启用 Hugging Face 离线模式，
-避免原转换器的旧下载回退逻辑意外联网。
+输出按版本隔离在 `$ORCS_DEPS_ROOT/checkpoints/sonic/<version>/ported/`。
+除权重和来源记录外，`parity.json` 记录转换前后的 latent/token/action 排列数值检查。
+转换会根据实际层结构识别输出层；未知控制参数、错误层形状和未处理的归一化参数均报错。
+单纯转换成功不代表物理仿真或实机效果已经验证。
 
-默认输出：
+仅楼梯任务增加版本选择，其他任务保持原路径。基础 encoder/decoder 权重冻结，
+适配器只加在 decoder 上。v1.1 使用机器人 yaw 归一化朝向；low-latency 使用
+10 帧、0.02 秒间隔的 G1 参考和 4 帧、0.02 秒间隔的 SMPL 参考。
+所有版本仍使用 10 帧本体历史和 50 Hz 控制。
 
-```text
-$ORCS_DEPS_ROOT/checkpoints/sonic/release/ported/
-├── last_ported.pt
-├── smpl_ported.pt       # 仅 --smpl 时生成
-└── conversion.json
-```
+新增任务名：
 
-已有权重、转换记录或锁文件时拒绝覆盖，请为新实验选择新输出目录。
-转换先写临时目录，失败不会发布半成品；成功后记录转换脚本、输入和输出的校验值。
-进程异常中断可能留下 `.convert.lock`，人工恢复前应确认没有转换进程仍在运行。
+- `Orcs-PerLoco-GrailStairs-AdaptSonic-V11`
+- `Orcs-PerLoco-GrailStairs-AdaptSonic-V11-Smpl`
+- `Orcs-PerLoco-GrailStairs-AdaptSonic-LowLatency`
+- `Orcs-PerLoco-GrailStairs-AdaptSonic-LowLatency-Smpl`
 
-`--smpl` 和 `--out-dir` 必须与 `--convert` 一起使用。
-本次仅支持 release 的现有转换流程；v1.1 和 low-latency 的转换请求会在下载和写出之前报错：
-“当前转换器尚未验证兼容”。没有强制绕过选项，不下载 planner 或 ONNX 模型。
-
-源码目录下也可使用：
+现有两个楼梯任务名仍表示 release。若没有新的 release 转换权重，允许使用原有 mocke
+release 权重。旧 release 训练 checkpoint 没有版本标签时，仅在所有冻结参数逐位一致时允许恢复；
+新 checkpoint 保存模型约定指纹，跨版本、跨编码模式或不同基础权重的恢复会被拒绝。
 
 ```bash
-bash scripts/setup/sonic_checkpoint.sh --version v1.1 --local-files-only
+orcs-pseudo-retarget --scene perloco-grail-stairs --sonic-version v1.1 --all
+orcs-view-seeds --scene perloco-grail-stairs --sonic-version v1.1 --source /实际样本目录
+play Orcs-PerLoco-GrailStairs-AdaptSonic-V11-Smpl --agent initial
+train Orcs-PerLoco-GrailStairs-AdaptSonic-V11-Smpl --env.scene.num-envs 64
 ```
 
-本功能不修改 `core/rl.py`，现有任务不会自动切换到这些输出。
-运行时模型选择、三个版本的训练兼容性仍需单独实现和验证。
-本地测试使用模拟缓存和小型占位文件，不代表真实 checkpoint 转换或实机行为已经验证。
+release seed 仍放在样本根目录 `seed_state.npz`；另外两个版本放在
+`seeds/v1.1/seed_state.npz` 和 `seeds/low-latency/seed_state.npz`。
+对应来源记录包含基础权重校验值、版本和观测约定。升级前没有模型来源记录的楼梯 seed
+需要重新生成；不会自动覆盖其他版本的 seed。
+
+### 验证工具和限制
+
+`tests/verify_official_sonic_onnx.py` 可在服务器对现有官方 v1.1/low-latency ONNX 做 CPU 数值对照。
+它不产生训练权重，也不能替代完整 last.pt 的校验。
+已发现该固定快照的 low-latency ONNX 实际输入把单帧朝向放在多帧朝向之前，
+与发布 observation_config.yaml 的列出顺序不同。验证器按图内实际排列进行比较并报告此差异；
+ORCS 直接构建每个 encoder 分支的输入，不使用该全模式 ONNX 打包方式，且未修改官方部署文件。
+
+完整训练验收仍须有有效的已整理楼梯数据、对应 seed 和完整 MJLab/assets 运行环境。
+数值测试通过不等于已通过楼梯 reset/step、PPO 收敛或实机测试。
+
+转换先写临时目录，通过检查后才发布；已有输出不覆盖。`--smpl` 和 `--out-dir`
+必须与 `--convert` 一起使用。显式 `--ckpt` 不存在时仍然直接报错，不回退下载。
+源码目录下的入口仍为 `bash scripts/setup/sonic_checkpoint.sh`。
+
+实际数值与未完成项见[三版本验证记录](validation/sonic_variants_2026-10-17.md)。
