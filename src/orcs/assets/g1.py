@@ -14,6 +14,8 @@ own variant compose on `flat_hand_spec` rather than re-deriving the surgery —
 
 from __future__ import annotations
 
+import os
+
 import mujoco
 import numpy as np
 from mjlab.asset_zoo.robots.unitree_g1.g1_constants import (
@@ -77,9 +79,15 @@ def _replace_hand_with_box(spec: mujoco.MjSpec) -> None:
 
 
 def flat_hand_spec() -> mujoco.MjSpec:
-    """Stock G1 spec with the hand surgery applied — the composition point for
+    """Stock G1 with flat hands, or fixed DEX1 via ORCS_G1_HAND_URDF.
+
+    The composition point for
     consumers that need to layer their own spec edits on top."""
     spec = mujoco.MjSpec.from_file(str(G1_XML))
+    hand_urdf = os.environ.get("ORCS_G1_HAND_URDF")
+    if hand_urdf:
+        from orcs.assets.dex1 import replace_with_dex1
+        return replace_with_dex1(spec, hand_urdf)
     _replace_hand_with_box(spec)
     return spec
 
