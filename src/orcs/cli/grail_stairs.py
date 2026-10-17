@@ -9,7 +9,9 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
+import tempfile
 import tomllib
 from pathlib import Path, PurePosixPath
 
@@ -119,13 +121,55 @@ def _git(root: Path, *args: str, capture: bool = False, stdin: str | None = None
     return p.stdout.strip() if capture else ""
 
 
+def materialize_lfs(root: Path, name: str) -> None:
+    """Smudge one selected pointer; never scan refs in a partial clone."""
+    target = root / safe_path(name)
+    with target.open("rb") as stream:
+        pointer = stream.read(1024)
+    if not pointer.startswith(b"version https://git-lfs.github.com/spec/v1"):
+        return
+    oid = re.search(rb"^oid sha256:([0-9a-f]{64})$", pointer, re.MULTILINE)
+    size = re.search(rb"^size ([0-9]+)$", pointer, re.MULTILINE)
+    if oid is None or size is None or target.stat().st_size > 1024:
+        raise ValueError(f"invalid Git LFS pointer: {target}")
+    expected_size = int(size[1])
+    print(f"[LFS] {name} ({expected_size / 1024**2:.2f} MiB)", flush=True)
+    env = dict(os.environ)
+    # Checkout deliberately skips smudging; this explicit request must not.
+    env.pop("GIT_LFS_SKIP_SMUDGE", None)
+    env.pop("GIT_LFS_SKIP_DOWNLOAD_ERRORS", None)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=target.parent, prefix=".orcs-lfs-", delete=False) as out:
+            temporary = Path(out.name)
+            subprocess.run(
+                ["git", "-C", str(root), "-c", "lfs.skipdownloaderrors=false",
+                 "-c", "lfs.fetchinclude=", "-c", "lfs.fetchexclude=",
+                 "lfs", "smudge", "--", name],
+                input=pointer, stdout=out, env=env, check=True,
+            )
+        digest = hashlib.sha256()
+        with temporary.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        if temporary.stat().st_size != expected_size or digest.hexdigest() != oid[1].decode():
+            raise ValueError(f"Git LFS payload size/SHA-256 mismatch: {target}")
+        temporary.replace(target)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 def fetch_files(root: Path, paths: list[str], revision: str) -> None:
-    # Exact paths are literal arguments for checkout; escape glob characters for LFS.
-    import glob
+    # lfs pull scans ls-tree -l across the ref, causing lazy blob fetches even
+    # with --include. Feed only selected pointers to smudge instead: LFS uses
+    # their object IDs and reuses its existing cache without enumerating refs.
+    paths = [safe_path(name) for name in paths]
     for start in range(0, len(paths), 100):
         batch = paths[start:start + 100]
-        _git(root, "checkout", revision, "--", *batch)
-        _git(root, "lfs", "pull", "--include=" + ",".join(glob.escape(x) for x in batch), "--exclude=")
+        _git(root, "--literal-pathspecs", "checkout", revision, "--", *batch)
+        for name in batch:
+            materialize_lfs(root, name)
     check_payload(root, paths)
 
 
