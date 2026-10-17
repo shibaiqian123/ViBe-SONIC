@@ -8,7 +8,7 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
-REPORT_VERSION = "stair-contact-v1"
+REPORT_VERSION = "stair-contact-v2"
 CONTACT_DISTANCE_M = (
     0.003  # Diagnostic near-contact band, not a quality pass threshold.
 )
@@ -181,6 +181,22 @@ def analyze_seed(model, seed, origin, root_addresses, joint_addresses):
     arrays["assist_force_norm_n"] = np.linalg.norm(seed.assist_force_w, axis=-1)
     arrays["finite_state"] = seed.valid
     no_contact = ~arrays["geometric_contact"].any(-1)
+    expected = seed.support_mask
+    expected_misses = None
+    support_gap_p95 = None
+    if expected is not None:
+        expected = np.asarray(expected, dtype=bool)
+        measured_gap = np.nanmax(np.abs(arrays["sole_gap_m"]), axis=-1)
+        expected_misses = expected & (
+            ~np.isfinite(measured_gap)
+            | (measured_gap > 0.01)
+            | (arrays["penetration_m"][:, None] > 0.01)
+        )
+        arrays["expected_support"] = expected
+        arrays["expected_support_gap_m"] = measured_gap
+        arrays["expected_support_miss"] = expected_misses
+        finite = measured_gap[expected & np.isfinite(measured_gap)]
+        support_gap_p95 = float(np.percentile(finite, 95)) if len(finite) else None
     summary = dict(
         report_version=REPORT_VERSION,
         frames=seed.num_frames,
@@ -190,14 +206,23 @@ def analyze_seed(model, seed, origin, root_addresses, joint_addresses):
         feet=["left", "right"],
         sole_regions=["heel", "toe"],
         contact_definition=f"collision distance <= {CONTACT_DISTANCE_M} m; not load-bearing proof",
-        quality_pass=None,
-        contact_labels="diagnostic only; source channel semantics unverified",
+        quality_pass=(
+            bool(expected.any() and not expected_misses.any())
+            if expected is not None else None
+        ),
+        contact_labels=(
+            "support_mask uses paired robot geometry; source foot_contact_probs remain diagnostic only"
+            if expected is not None else "diagnostic only; source channel semantics unverified"
+        ),
         no_foot_contact_frames=int(no_contact.sum()),
         longest_no_foot_contact_s=longest_run(no_contact) / seed.fps,
         penetration_max_m=float(arrays["penetration_m"].max()),
         tracking_error_mean_m=float(seed.body_tracking_error.mean()),
         tracking_error_max_m=float(seed.body_tracking_error.max()),
         assist_force_max_n=float(arrays["assist_force_norm_n"].max()),
+        expected_support_frames=int(expected.sum()) if expected is not None else 0,
+        expected_support_misses=int(expected_misses.sum()) if expected_misses is not None else 0,
+        expected_support_gap_p95_m=support_gap_p95,
     )
     return arrays, summary
 

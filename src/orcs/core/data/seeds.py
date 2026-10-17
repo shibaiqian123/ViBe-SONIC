@@ -51,6 +51,10 @@ class SeedMotion:
     object_target_pos_w: np.ndarray | None = None
     object_assist_force_w: np.ndarray | None = None
     object_assist_torque_w: np.ndarray | None = None
+    support_mask: np.ndarray | None = None
+    support_target_ankle_w: np.ndarray | None = None
+    support_surface_normal_w: np.ndarray | None = None
+    support_transition_weight: np.ndarray | None = None
 
     def __post_init__(self) -> None:
         self._validate()
@@ -101,11 +105,19 @@ class SeedMotion:
             "object_target_pos_w": (t, 3),
             "object_assist_force_w": (t, 3),
             "object_assist_torque_w": (t, 3),
+            "support_mask": (t, 2),
+            "support_target_ankle_w": (t, 2, 3),
+            "support_surface_normal_w": (t, 2, 3),
+            "support_transition_weight": (t, 2),
         }
-        present = [getattr(self, name) is not None for name in optional]
-        if any(present) and not all(present):
-            missing = [name for name in optional if getattr(self, name) is None]
-            raise ValueError(f"object seed channel is partial; missing {missing}")
+        for group in (
+            tuple(name for name in optional if name.startswith("object_")),
+            tuple(name for name in optional if name.startswith("support_")),
+        ):
+            present = [getattr(self, name) is not None for name in group]
+            if any(present) and not all(present):
+                missing = [name for name in group if getattr(self, name) is None]
+                raise ValueError(f"optional seed channel is partial; missing {missing}")
         for name, shape in optional.items():
             value = getattr(self, name)
             if value is not None and value.shape != shape:
@@ -151,6 +163,10 @@ class SeedMotion:
             "object_target_pos_w",
             "object_assist_force_w",
             "object_assist_torque_w",
+            "support_mask",
+            "support_target_ankle_w",
+            "support_surface_normal_w",
+            "support_transition_weight",
         ):
             value = getattr(self, name)
             if value is not None:
@@ -202,6 +218,10 @@ class SeedMotion:
                 "object_target_pos_w",
                 "object_assist_force_w",
                 "object_assist_torque_w",
+                "support_mask",
+                "support_target_ankle_w",
+                "support_surface_normal_w",
+                "support_transition_weight",
             ):
                 kwargs[name] = d[name].copy() if name in d else None
             return cls(

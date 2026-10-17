@@ -124,6 +124,10 @@ class AssistanceSnapshot:
     object_target_pos_w: torch.Tensor | None = None
     object_force_w: torch.Tensor | None = None
     object_torque_w: torch.Tensor | None = None
+    support_mask: torch.Tensor | None = None
+    support_target_ankle_w: torch.Tensor | None = None
+    support_surface_normal_w: torch.Tensor | None = None
+    support_transition_weight: torch.Tensor | None = None
 
 
 class AssistedMotionController:
@@ -223,6 +227,25 @@ class AssistedMotionController:
             target_vel - current_vel
         )
 
+        # Stairs contact-v2 adds support-foot translation assistance before the
+        # existing global force cap.  Swing feet receive zero support weight.
+        support_target = getattr(self.command, "support_target_ankle_w", None)
+        support_mask = getattr(self.command, "support_mask", None)
+        support_weight = getattr(self.command, "support_transition_weight", None)
+        if support_target is not None and support_mask is not None and support_weight is not None:
+            ankle_indices = [
+                self.body_names.index("left_ankle_roll_link"),
+                self.body_names.index("right_ankle_roll_link"),
+            ]
+            support_target = support_target.to(device=current_pos.device, dtype=current_pos.dtype)
+            support_mask = support_mask.to(device=current_pos.device)
+            support_weight = support_weight.to(device=current_pos.device, dtype=current_pos.dtype)
+            support_delta = support_target - current_pos[:, ankle_indices]
+            support_force = self.body_mass[:, ankle_indices, None] * (
+                rate**2 * support_delta - 2.0 * damping * rate * current_vel[:, ankle_indices]
+            )
+            forces[:, ankle_indices] += support_force * support_mask[..., None] * support_weight[..., None]
+
         # The torso is the 6-D global anchor and therefore carries the robot's
         # total mass.  Other landmarks receive translation-only corrections.
         forces[:, self.anchor_idx] *= (
@@ -247,6 +270,28 @@ class AssistedMotionController:
             torch.ones_like(torque_norm), torque_budget / torque_norm.clamp_min(1e-6)
         )
         torques[:, self.anchor_idx] = torque * torque_scale[:, None]
+        if support_target is not None and support_mask is not None and support_weight is not None:
+            surface_normal = getattr(self.command, "support_surface_normal_w", None)
+            if surface_normal is not None:
+                surface_normal = surface_normal.to(device=current_pos.device, dtype=current_pos.dtype)
+                ankle_indices = [
+                    self.body_names.index("left_ankle_roll_link"),
+                    self.body_names.index("right_ankle_roll_link"),
+                ]
+                ankle_quat = self.robot.data.body_link_quat_w[:, ankle_indices]
+                sole_axis = quat_apply(ankle_quat, torch.tensor([0.0, 0.0, 1.0], device=current_pos.device, dtype=current_pos.dtype))
+                normal_error = torch.linalg.cross(sole_axis, surface_normal, dim=-1)
+                ankle_ang_vel = self.robot.data.body_link_ang_vel_w[:, ankle_indices]
+                foot_inertia = self.anchor_inertia[:, None, None].expand(-1, 2, 1)
+                foot_torque = foot_inertia * (rate**2 * normal_error - 2.0 * damping * ankle_ang_vel)
+                torques[:, ankle_indices] += foot_torque * support_mask[..., None] * support_weight[..., None]
+                torque_used = torch.linalg.vector_norm(torques, dim=-1).sum(-1)
+                total_torque_budget = self.total_mass * _GRAVITY * self.morphology_scale
+                total_torque_scale = torch.minimum(
+                    torch.ones_like(torque_used), total_torque_budget / torque_used.clamp_min(1e-6)
+                )
+                torques *= total_torque_scale[:, None, None]
+                torque_scale = torch.minimum(torque_scale, total_torque_scale)
         object_target = object_force = object_torque = None
         object_scale = torch.ones_like(force_scale)
         if self.object is not None:
@@ -267,6 +312,10 @@ class AssistedMotionController:
             object_target_pos_w=object_target,
             object_force_w=object_force,
             object_torque_w=object_torque,
+            support_mask=support_mask,
+            support_target_ankle_w=support_target,
+            support_surface_normal_w=getattr(self.command, "support_surface_normal_w", None),
+            support_transition_weight=support_weight,
         )
 
     def _apply_object(

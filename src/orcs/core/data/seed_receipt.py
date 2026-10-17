@@ -8,7 +8,11 @@ from pathlib import Path
 
 def source_digest(sample: Path) -> str:
     h = hashlib.sha256()
-    for path in (sample / "smpl_motion.npz", sample / "metadata.json", sample.parent / "tile.json"):
+    paths = [sample / "smpl_motion.npz", sample / "metadata.json", sample.parent / "tile.json"]
+    contact = sample / "stair_contact_targets.npz"
+    if contact.exists():
+        paths.append(contact)
+    for path in paths:
         with path.open("rb") as f:
             for chunk in iter(lambda: f.read(1024 * 1024), b""):
                 h.update(chunk)
@@ -65,7 +69,7 @@ def preserve_existing_seed(path: Path) -> None:
     digest = hashlib.sha256(path.read_bytes()).hexdigest()[:16]
     backup = path.parent / "seed_history" / digest
     backup.mkdir(parents=True, exist_ok=True)
-    for name in (path.name, "seed_source.json", "contact_quality.json", "contact_quality.npz"):
+    for name in (path.name, "seed_source.json", "contact_quality.json", "contact_quality.npz", "stair_contact_targets.npz", "stair_contact_targets.json"):
         source = path.parent / name
         target = backup / name
         if source.exists() and not target.exists():

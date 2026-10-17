@@ -861,6 +861,19 @@ class _Recorder:
             # reason to break the source/seed coverage contract.
             "valid": bool(finite[env_id].item()),
         }
+        support_fields = (
+            assist.support_mask,
+            assist.support_target_ankle_w,
+            assist.support_surface_normal_w,
+            assist.support_transition_weight,
+        )
+        if all(value is not None for value in support_fields):
+            row.update(
+                support_mask=_cpu(assist.support_mask[env_id]),
+                support_target_ankle_w=_cpu(assist.support_target_ankle_w[env_id]),
+                support_surface_normal_w=_cpu(assist.support_surface_normal_w[env_id]),
+                support_transition_weight=_cpu(assist.support_transition_weight[env_id]),
+            )
         if self.controller.object is not None:
             obj = self.controller.object
             assert assist.object_target_pos_w is not None

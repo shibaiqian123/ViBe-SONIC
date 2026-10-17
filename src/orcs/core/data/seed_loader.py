@@ -72,6 +72,11 @@ class SeededSmplMotionLoader(ConcatMotionLoader):
         all_sj: list[torch.Tensor] = []
         all_sq: list[torch.Tensor] = []
         all_sv: list[torch.Tensor] = []
+        all_support_mask: list[torch.Tensor] = []
+        all_support_target: list[torch.Tensor] = []
+        all_support_normal: list[torch.Tensor] = []
+        all_support_weight: list[torch.Tensor] = []
+        support_presence: list[bool] = []
         clip_lengths: list[int] = []
 
         def _t(value: np.ndarray) -> torch.Tensor:
@@ -95,6 +100,16 @@ class SeededSmplMotionLoader(ConcatMotionLoader):
                 raise FileNotFoundError(f"{sample}: missing smpl_motion.npz")
 
             seed = SeedMotion.load(seed_path)
+            support_values = (
+                seed.support_mask,
+                seed.support_target_ankle_w,
+                seed.support_surface_normal_w,
+                seed.support_transition_weight,
+            )
+            has_support = all(value is not None for value in support_values)
+            if any(value is not None for value in support_values) and not has_support:
+                raise ValueError(f"{seed_path}: partial stairs-contact-v2 channels")
+            support_presence.append(has_support)
             if not np.isclose(seed.fps, expected_fps, rtol=0.0, atol=1e-4):
                 raise ValueError(
                     f"{seed_path}: seed fps {seed.fps:g} != env fps "
@@ -171,6 +186,11 @@ class SeededSmplMotionLoader(ConcatMotionLoader):
             all_sj.append(sj.float())
             all_sq.append(sq.float())
             all_sv.append(sv.float())
+            if has_support:
+                all_support_mask.append(_t(seed.support_mask))
+                all_support_target.append(_t(seed.support_target_ankle_w))
+                all_support_normal.append(_t(seed.support_surface_normal_w))
+                all_support_weight.append(_t(seed.support_transition_weight))
             clip_lengths.append(n_frames)
             self.seed_files.append(str(seed_path))
 
@@ -185,6 +205,12 @@ class SeededSmplMotionLoader(ConcatMotionLoader):
         self.smpl_joints = torch.cat(all_sj)
         self.smpl_root_quat = torch.cat(all_sq)
         self.smpl_joints_viz = torch.cat(all_sv)
+        if any(support_presence) and not all(support_presence):
+            raise ValueError("stairs-contact-v2 channels must exist for every selected clip")
+        self.support_mask = torch.cat(all_support_mask) if all_support_mask else None
+        self.support_target_ankle_w = torch.cat(all_support_target) if all_support_target else None
+        self.support_surface_normal_w = torch.cat(all_support_normal) if all_support_normal else None
+        self.support_transition_weight = torch.cat(all_support_weight) if all_support_weight else None
         self.time_step_total = int(self.joint_pos.shape[0])
 
         self.clip_lengths = torch.tensor(

@@ -7,13 +7,18 @@ import os
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-STAIR_POINT_MAPPING = "stairs-ankle-v1"
+STAIR_POINT_MAPPING = "stairs-contact-v2"
+STAIR_CONTACT_CONFIG = "distance<=3mm;normal<=30deg;transition=0.1s"
 
 
 def stair_seed_identity() -> dict:
     path = os.environ.get("ORCS_G1_HAND_URDF")
     if not path:
-        return {"point_mapping": STAIR_POINT_MAPPING, "hand_config": "flat-hand-v1"}
+        return {
+            "point_mapping": STAIR_POINT_MAPPING,
+            "contact_config": STAIR_CONTACT_CONFIG,
+            "hand_config": "flat-hand-v1",
+        }
     urdf = Path(path).expanduser().resolve(strict=True)
     root = ET.parse(urdf).getroot()
     h = hashlib.sha256(b"dex1-fixed-zero-v1")
@@ -30,5 +35,6 @@ def stair_seed_identity() -> dict:
                     h.update(chunk)
     return {
         "point_mapping": STAIR_POINT_MAPPING,
+        "contact_config": STAIR_CONTACT_CONFIG,
         "hand_config": "dex1-fixed-zero:" + h.hexdigest(),
     }

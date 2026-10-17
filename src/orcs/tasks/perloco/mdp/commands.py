@@ -65,6 +65,7 @@ class _TileMotionLoader(ConcatMotionLoader):
         self._sj: list[torch.Tensor] = []
         self._sq: list[torch.Tensor] = []
         self._sv: list[torch.Tensor] = []
+        self._support: list[tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor] | None] = []
 
     def _load_extra(self, sample_dir: Path, npz, n_frames: int) -> None:
         for dst, src in zip(
@@ -73,17 +74,60 @@ class _TileMotionLoader(ConcatMotionLoader):
             strict=True,
         ):
             dst.append(src)
+        contact_path = sample_dir / "stair_contact_targets.npz"
+        if contact_path.exists():
+            with np.load(contact_path) as contact:
+                required = ("support_mask", "support_target_ankle_w", "support_surface_normal_w", "support_transition_weight")
+                if any(name not in contact for name in required):
+                    raise ValueError(f"{contact_path}: incomplete stairs-contact-v2 target file")
+                values = tuple(torch.as_tensor(contact[name], dtype=torch.float32, device=self.device) for name in required)
+            if values[0].shape != (n_frames, 2) or values[1].shape != (n_frames, 2, 3) or values[2].shape != (n_frames, 2, 3) or values[3].shape != (n_frames, 2):
+                raise ValueError(f"{contact_path}: contact target frame/foot shape mismatch")
+            self._support.append(values)
+        else:
+            self._support.append(None)
 
     def _finalize_extra(self) -> None:
         self.smpl_joints = torch.cat(self._sj)      # (T_tot, 24, 3) z-up, RAW
         self.smpl_root_quat = torch.cat(self._sq)   # (T_tot, 4) z-up, wxyz
         self.smpl_joints_viz = torch.cat(self._sv)  # (T_tot, 24, 3) z-up world
+        if any(value is not None for value in self._support) and not all(value is not None for value in self._support):
+            raise ValueError("stairs-contact-v2 targets must exist for every selected clip")
+        if self._support:
+            self.support_mask = torch.cat([value[0] for value in self._support if value is not None]) if self._support[0] is not None else None
+            self.support_target_ankle_w = torch.cat([value[1] for value in self._support if value is not None]) if self._support[0] is not None else None
+            self.support_surface_normal_w = torch.cat([value[2] for value in self._support if value is not None]) if self._support[0] is not None else None
+            self.support_transition_weight = torch.cat([value[3] for value in self._support if value is not None]) if self._support[0] is not None else None
+        else:
+            self.support_mask = self.support_target_ankle_w = self.support_surface_normal_w = self.support_transition_weight = None
 
 
 class TerrainMotionCommand(MultiClipMotionCommand):
     """Multi-clip motion tracking where the allowed clips follow the terrain."""
 
     cfg: TerrainMotionCommandCfg
+
+    @property
+    def support_mask(self) -> torch.Tensor | None:
+        values = getattr(self.motion, "support_mask", None)
+        return None if values is None else values[self.time_steps]
+
+    @property
+    def support_target_ankle_w(self) -> torch.Tensor | None:
+        values = getattr(self.motion, "support_target_ankle_w", None)
+        if values is None:
+            return None
+        return values[self.time_steps] + self._env.scene.env_origins[:, None, :]
+
+    @property
+    def support_surface_normal_w(self) -> torch.Tensor | None:
+        values = getattr(self.motion, "support_surface_normal_w", None)
+        return None if values is None else values[self.time_steps]
+
+    @property
+    def support_transition_weight(self) -> torch.Tensor | None:
+        values = getattr(self.motion, "support_transition_weight", None)
+        return None if values is None else values[self.time_steps]
 
     def _build_loader(self) -> ConcatMotionLoader:
         """Load in TILE order, remembering each clip's tile."""
@@ -211,6 +255,28 @@ class SmplSeedTerrainMotionCommand(TerrainMotionCommand):
         self.metrics["error_point_vel_mean"] = torch.zeros(
             self.num_envs, device=self.device
         )
+
+    @property
+    def support_mask(self) -> torch.Tensor | None:
+        values = getattr(self.motion, "support_mask", None)
+        return None if values is None else values[self.time_steps]
+
+    @property
+    def support_target_ankle_w(self) -> torch.Tensor | None:
+        values = getattr(self.motion, "support_target_ankle_w", None)
+        if values is None:
+            return None
+        return values[self.time_steps] + self._env.scene.env_origins[:, None, :]
+
+    @property
+    def support_surface_normal_w(self) -> torch.Tensor | None:
+        values = getattr(self.motion, "support_surface_normal_w", None)
+        return None if values is None else values[self.time_steps]
+
+    @property
+    def support_transition_weight(self) -> torch.Tensor | None:
+        values = getattr(self.motion, "support_transition_weight", None)
+        return None if values is None else values[self.time_steps]
 
     def _previous_frames(self, frames: torch.Tensor) -> torch.Tensor:
         clip_start = self.motion.clip_offsets[self._clip_ids]
