@@ -67,6 +67,24 @@ def _tiles(root: Path) -> dict[str, dict]:
     return out
 
 
+def _terrain_top(tile: dict) -> float:
+    """Top of staged collision geometry, including the implicit floor at z=0."""
+    heights = [0.0]
+    for box in tile.get("boxes", []):
+        # Project oriented half-extents onto world Z (quaternion is wxyz).
+        w, x, y, z = box.get("quat", (1.0, 0.0, 0.0, 0.0))
+        norm2 = w*w + x*x + y*y + z*z
+        if norm2 <= 0:
+            raise ValueError("invalid box quaternion")
+        row_z = (2*(x*z-w*y)/norm2, 2*(y*z+w*x)/norm2,
+                 1-2*(x*x+y*y)/norm2)
+        heights.append(box["pos"][2] + sum(abs(r)*h for r, h in zip(row_z, box["half"], strict=True)))
+    for mesh in tile.get("meshes", []):
+        # Staging has already baked each mesh's pose and scale into vertices.
+        heights.extend(vertex[2] for vertex in mesh["vertices"])
+    return float(max(heights))
+
+
 def _build_model(root: Path, family: str, level: float) -> mujoco.MjModel:
     """G1 + one staged tile, compiled — through the ENV's terrain builder.
 
@@ -107,10 +125,13 @@ def main() -> None:
     state: dict = {"scene": None, "model": None, "data": None,
                    "clip": None, "playing": True}
 
+    initial_levels = tuple(sorted(k.split("/")[1] for k in keys
+                                  if tiles[k]["family"] == families[0]))
+    initial_samples = tuple(p.parent.name for p in tiles[keys[0]]["clips"])
     with server.gui.add_folder("Tile"):
         gui_family = server.gui.add_dropdown("family", tuple(families))
-        gui_level = server.gui.add_dropdown("level", ("level_1.00",))
-        gui_sample = server.gui.add_dropdown("sample", ("sample1",))
+        gui_level = server.gui.add_dropdown("level", initial_levels)
+        gui_sample = server.gui.add_dropdown("sample", initial_samples)
         gui_info = server.gui.add_markdown("")
     with server.gui.add_folder("Playback"):
         gui_frame = server.gui.add_slider("frame", 0, 1, 1, 0)
@@ -163,11 +184,12 @@ def main() -> None:
         gui_frame.value = 0
 
         tile_json = json.loads((clip.parent.parent / "tile.json").read_text())
-        top = max(b["pos"][2] + b["half"][2] for b in tile_json["boxes"])
+        top = _terrain_top(tile_json)
         foot = float(state["clip"]["root_pos"][:, 2].min())
         gui_info.content = (
             f"**{key}** · {gui_sample.value} — {n} frames @ 50 Hz\n\n"
-            f"{len(tile_json['boxes'])} box(es) · top `{top:.2f} m` · "
+            f"{len(tile_json.get('boxes', []))} box(es) · "
+            f"{len(tile_json.get('meshes', []))} mesh part(s) · top `{top:.2f} m` · "
             f"lowest pelvis `{foot:+.3f} m`")
         _status()
 
@@ -220,8 +242,6 @@ def main() -> None:
         gui_status.content = f"wrote {len(dropped)} entries -> `{path}`"
         print(f"[view] wrote {len(dropped)} exclusions -> {path}")
 
-    gui_level.options = _levels_of(gui_family.value)
-    gui_level.value = gui_level.options[0]
     _load_tile(_key())
 
     print(f"[view] http://localhost:{args.port}")
