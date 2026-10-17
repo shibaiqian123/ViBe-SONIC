@@ -224,7 +224,7 @@ class SmplSeedTerrainMotionCommand(TerrainMotionCommand):
         origins = self._env.scene.env_origins
         if frames.ndim == 2:
             origins = origins[:, None, :]
-        return scaled_smpl_targets(joints, scales, origins)
+        return scaled_smpl_targets(joints, scales, origins, mapping=self.cfg.point_mapping)
 
     @property
     def point_target_pos_w(self) -> torch.Tensor:
@@ -378,6 +378,7 @@ class TerrainMotionCommandCfg(MultiClipMotionCommandCfg):
     a staged directory.
     """
 
+    point_mapping: str = "legacy"
     sonic_version: str | None = None
     sonic_contract_id: str | None = None
     tile_keys: tuple[str, ...] = ()

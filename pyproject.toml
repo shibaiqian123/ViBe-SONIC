@@ -73,6 +73,7 @@ orcs-build-smpl = "orcs.cli.build_smpl_dataset:main"
 orcs-rollout-smpl = "orcs.cli.rollout_smpl:main"
 orcs-make-nominal = "orcs.cli.make_nominal_motion:main"
 orcs-pseudo-retarget = "orcs.cli.pseudo_retarget:main"
+orcs-seed-quality = "orcs.cli.seed_quality:main"
 orcs-view-seeds = "orcs.cli.view_seed_motion:main"
 orcs-download-released-models = "orcs.cli.download_released_models:main"
 

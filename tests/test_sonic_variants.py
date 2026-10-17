@@ -68,7 +68,7 @@ def test_heading_and_smpl_features_match_independent_rotations(torch):
             f = spec.frames(mode)
             ref = Rotation.random(2*f, random_state=rng)
             ref_q = ref.as_quat()[:, [3, 0, 1, 2]].reshape(2, f, 4)
-            frame = Rotation.from_euler('z', angles[:, 2]) if spec.orientation == 'heading' else robot_rot
+            frame = Rotation.from_euler('z', angles[:, 2:3]) if spec.orientation == 'heading' else robot_rot
             relative = np.einsum('bij,bfjk->bfik', frame.as_matrix().transpose(0, 2, 1), ref.as_matrix().reshape(2, f, 3, 3))
             ori = relative[..., :2].reshape(2, f, 6)
             def tensor(a):
@@ -152,9 +152,18 @@ def test_seed_version_receipts_do_not_cross(tmp_path):
     p = seed_path(sample, 'v1.1').with_name('seed_source.json')
     p.parent.mkdir(parents=True)
     p.write_text(json.dumps({'source_sha256': source_digest(sample), 'sonic_version': 'v1.1', 'contract_id': 'v11'}))
+    assert not seed_matches_source(sample, 'v1.1', 'v11')  # Old receipt lacks mapping/hand identity.
+    from orcs.core.data.seed_identity import stair_seed_identity
+    payload = json.loads(p.read_text())
+    payload.update(stair_seed_identity())
+    p.write_text(json.dumps(payload))
     assert seed_matches_source(sample, 'v1.1', 'v11')
     assert not seed_matches_source(sample, 'low-latency', 'v11')
     assert not seed_matches_source(sample, 'v1.1', 'another-weight')
+    p.write_text(json.dumps({**payload, 'hand_config': 'different-hand'}))
+    assert not seed_matches_source(sample, 'v1.1', 'v11')
+    p.write_text(json.dumps({**payload, 'point_mapping': 'legacy'}))
+    assert not seed_matches_source(sample, 'v1.1', 'v11')
 
 
 def test_native_converter_rejects_wrong_file_before_unpickling(torch, tmp_path, monkeypatch):

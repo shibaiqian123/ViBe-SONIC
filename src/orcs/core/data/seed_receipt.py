@@ -28,6 +28,8 @@ def write_seed_receipt(sample: Path, version: str | None = None, identity: str |
         _, model_meta = model_info(version, "smpl")
         if identity != model_meta['contract_id']:
             raise ValueError("seed generator used a different SONIC model contract")
+        from orcs.core.data.seed_identity import stair_seed_identity
+        receipt.update(stair_seed_identity())
         receipt.update(sonic_version=version, contract_id=identity,
                        base_sha256=model_meta['source_sha256'], observation_version=CONTRACT_VERSION)
         destination = seed_path(sample, version).with_name('seed_source.json')
@@ -45,6 +47,26 @@ def seed_matches_source(sample: Path, version: str | None = None, identity: str 
         if version is not None and (receipt.get('sonic_version') != version or
                                     not identity or receipt.get('contract_id') != identity):
             return False
+        if version is not None:
+            from orcs.core.data.seed_identity import stair_seed_identity
+            expected = stair_seed_identity()
+            if any(receipt.get(key) != value for key, value in expected.items()):
+                return False
         return receipt["source_sha256"] == source_digest(sample)
     except (OSError, ValueError, KeyError):
         return False
+
+
+def preserve_existing_seed(path: Path) -> None:
+    """Keep reproducible old seed/receipt pairs before successful replacement."""
+    if not path.exists():
+        return
+    import shutil
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()[:16]
+    backup = path.parent / "seed_history" / digest
+    backup.mkdir(parents=True, exist_ok=True)
+    for name in (path.name, "seed_source.json", "contact_quality.json", "contact_quality.npz"):
+        source = path.parent / name
+        target = backup / name
+        if source.exists() and not target.exists():
+            shutil.copy2(source, target)

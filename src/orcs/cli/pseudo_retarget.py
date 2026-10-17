@@ -128,6 +128,12 @@ def _run_grail_batch(*, device: str | None, overwrite: bool, source: str = "grai
     pending = [
         sample for sample in samples if overwrite or not _seed_is_complete(sample, version)
     ]
+    if source == "grail_stairs" and not overwrite:
+        from orcs.core.sonic.specs import seed_path
+        existing = [sample for sample in pending if seed_path(sample, sonic_version).exists()]
+        if existing:
+            raise ValueError("existing stair seeds need regeneration for the current mapping/hand/source; "
+                             "rerun with --overwrite (old seeds are archived in seed_history)")
     skipped = len(samples) - len(pending)
     print(
         f"[kinematic-retarget] GRAIL roster: {len(samples)} clips "
@@ -156,6 +162,8 @@ def _run_grail_batch(*, device: str | None, overwrite: bool, source: str = "grai
             str(sample),
         ]
         command.extend(("--device", run_device, "--sonic-version", sonic_version))
+        if source == "grail_stairs":
+            command.append("--overwrite")
         if subprocess.run(command, check=False).returncode != 0:
             retry_failures.append(sample)
 
@@ -339,7 +347,10 @@ def _run_vectorized_corpus(
                 capture_steps=capture_steps,
                 env_id=env_id,
             )
+            from orcs.core.data.seed_receipt import preserve_existing_seed
             from orcs.core.sonic.specs import seed_path
+            if version is not None:
+                preserve_existing_seed(seed_path(sample, version))
             seed.save(seed_path(sample, version or "release"))
             from orcs.core.data.seed_receipt import write_seed_receipt
             write_seed_receipt(sample, version, identity)
@@ -985,6 +996,9 @@ def _run(
             source_path=str(sample / "smpl_motion.npz"),
             capture_steps=capture_steps,
         )
+        if version is not None:
+            from orcs.core.data.seed_receipt import preserve_existing_seed
+            preserve_existing_seed(output)
         seed.save(output)
         from orcs.core.sonic.specs import seed_path
         if output.resolve() == seed_path(sample, version or "release").resolve():
@@ -1092,6 +1106,8 @@ def main() -> None:
             output = seed_path(sample, args.sonic_version)
         else:
             output = Path.cwd() / "seed_state.npz"
+        if args.scene == "perloco-grail-stairs" and output.exists() and not args.overwrite:
+            parser.error("seed output exists; use --overwrite to archive it and regenerate")
         seed = _run(
             cfg,
             object_name=object_name,

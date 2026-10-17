@@ -143,6 +143,7 @@ class AssistedMotionController:
         self.command = env.command_manager.get_term(command_name)
         self.robot = env.scene[robot_name]
         self.object = env.scene[object_name] if object_name else None
+        self.point_mapping = getattr(self.command.cfg, "point_mapping", "legacy")
         self.gains = gains
         self.body_names = tuple(name for name, _ in G1_SMPL_BODY_MAP)
         missing = [name for name in self.body_names if name not in self.robot.body_names]
@@ -163,7 +164,7 @@ class AssistedMotionController:
         if clip_ids is None:
             source = self.command.motion.smpl_joints_viz
             self.morphology_scale: float | torch.Tensor = infer_morphology_scale(
-                source, nominal_body_pos[0], self.body_names
+                source, nominal_body_pos[0], self.body_names, mapping=self.point_mapping
             )
         else:
             if clip_ids.shape != (env.num_envs,):
@@ -183,7 +184,7 @@ class AssistedMotionController:
                     infer_morphology_scale(
                         self.command.motion.smpl_joints_viz[start:end],
                         nominal_body_pos[env_id],
-                        self.body_names,
+                        self.body_names, mapping=self.point_mapping,
                     )
                 )
             self.morphology_scale = torch.tensor(
@@ -202,7 +203,7 @@ class AssistedMotionController:
         """Return morphology-scaled SMPL landmark targets for source frames."""
         joints = self.command.motion.smpl_joints_viz[frame_idx]
         return scaled_smpl_targets(
-            joints, self.morphology_scale, self.env.scene.env_origins
+            joints, self.morphology_scale, self.env.scene.env_origins, mapping=self.point_mapping
         )
 
     def apply(self) -> AssistanceSnapshot:

@@ -57,6 +57,8 @@ def configure_env(cfg, version: str, mode: str):
     _, meta = model_info(version, mode)
     cfg.observations.update(observation_groups(version, mode))
     command = cfg.commands['motion']
+    from orcs.core.data.seed_identity import STAIR_POINT_MAPPING
+    command.point_mapping = STAIR_POINT_MAPPING
     command.sonic_version = version
     command.sonic_contract_id = meta['contract_id']
     # Runtime metadata on config survives serialized experiment snapshots.

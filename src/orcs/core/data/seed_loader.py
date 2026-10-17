@@ -85,7 +85,9 @@ class SeededSmplMotionLoader(ConcatMotionLoader):
                 from orcs.core.sonic.specs import seed_path as versioned_seed_path
                 seed_path = versioned_seed_path(sample, sonic_version)
                 if not seed_matches_source(sample, sonic_version, sonic_contract_id):
-                    raise ValueError(f"stale or wrong-version seed: {seed_path}")
+                    raise ValueError(f"stale seed version/mapping/hand configuration: {seed_path}; "
+                                     f"run orcs-pseudo-retarget --scene perloco-grail-stairs "
+                                     f"--sonic-version {sonic_version} --all --overwrite")
             smpl_path = sample / "smpl_motion.npz"
             if not seed_path.exists():
                 raise FileNotFoundError(f"{sample}: missing seed_state.npz")

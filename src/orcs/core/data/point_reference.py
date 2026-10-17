@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import torch
 
+from .seed_identity import STAIR_POINT_MAPPING
+
 __all__ = [
     "G1_SMPL_BODY_MAP",
     "infer_morphology_scale",
@@ -36,6 +38,18 @@ G1_SMPL_BODY_MAP: tuple[tuple[str, int], ...] = (
     ("right_wrist_yaw_link", 21),
 )
 
+STAIR_SMPL_BODY_MAP = tuple((name, {10: 7, 11: 8}.get(index, index))
+                            for name, index in G1_SMPL_BODY_MAP)
+
+
+def point_body_map(mapping: str = "legacy"):
+    if mapping == "legacy":
+        return G1_SMPL_BODY_MAP
+    if mapping == STAIR_POINT_MAPPING:
+        return STAIR_SMPL_BODY_MAP
+    raise ValueError(f"unknown point mapping: {mapping}")
+
+
 _LEFT_LEG = (0, 1, 4, 10)
 _RIGHT_LEG = (0, 2, 5, 11)
 
@@ -51,6 +65,7 @@ def infer_morphology_scale(
     smpl_joints_w: torch.Tensor,
     robot_body_pos_w: torch.Tensor,
     robot_body_names: tuple[str, ...] | list[str],
+    *, mapping: str = "legacy",
 ) -> float:
     """Infer one G1/human scale from median left/right leg-chain lengths."""
     name_to_idx = {name: i for i, name in enumerate(robot_body_names)}
@@ -66,10 +81,12 @@ def infer_morphology_scale(
         )
     robot_length = torch.stack(robot_lengths).mean()
 
+    point_body_map(mapping)  # Reject unknown contracts.
+    left, right = ((0, 1, 4, 7), (0, 2, 5, 8)) if mapping == STAIR_POINT_MAPPING else (_LEFT_LEG, _RIGHT_LEG)
     human_lengths = torch.stack(
         (
-            _chain_length(smpl_joints_w, _LEFT_LEG),
-            _chain_length(smpl_joints_w, _RIGHT_LEG),
+            _chain_length(smpl_joints_w, left),
+            _chain_length(smpl_joints_w, right),
         ),
         dim=-1,
     ).mean(-1)
@@ -83,15 +100,20 @@ def scaled_smpl_targets(
     smpl_joints_w: torch.Tensor,
     scale: float | torch.Tensor,
     origins: torch.Tensor,
+    *, mapping: str = "legacy",
 ) -> torch.Tensor:
     """Map every homologous SMPL point to a G1-sized world target.
 
-    Root xy and the lowest source ankle z remain in the authored scene frame;
+    Root xy and the lowest source anchor z remain in the authored scene frame;
     body-relative offsets are uniformly scaled around the pelvis.  ``scale``
-    may be one scalar or one value per leading batch element.
+    may be one scalar or one value per leading batch element. Legacy anchors
+    are foot joints 10/11; stairs use ankle joints 7/8. Neither is a sole
+    contact constraint: the authored reference is not projected onto terrain.
     """
     pelvis = smpl_joints_w[..., 0, :]
-    foot_z = smpl_joints_w[..., (10, 11), 2].amin(dim=-1)
+    body_map = point_body_map(mapping)
+    anchor_indices = (7, 8) if mapping == STAIR_POINT_MAPPING else (10, 11)
+    foot_z = smpl_joints_w[..., anchor_indices, 2].amin(dim=-1)
     scale_t = torch.as_tensor(
         scale, dtype=smpl_joints_w.dtype, device=smpl_joints_w.device
     )
@@ -100,7 +122,7 @@ def scaled_smpl_targets(
 
     root = pelvis.clone()
     root[..., 2] = foot_z + scale_t * (pelvis[..., 2] - foot_z)
-    mapped = smpl_joints_w[..., [j for _, j in G1_SMPL_BODY_MAP], :]
+    mapped = smpl_joints_w[..., [j for _, j in body_map], :]
     targets = root[..., None, :] + scale_t[..., None, None] * (
         mapped - pelvis[..., None, :]
     )

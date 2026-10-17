@@ -11,6 +11,7 @@ import argparse
 import time
 from contextlib import ExitStack
 from pathlib import Path
+from threading import RLock
 
 import mujoco
 import numpy as np
@@ -184,7 +185,9 @@ def main() -> None:
             if args.seed is not None and args.seed.expanduser().resolve() != expected_seed:
                 parser.error(f"selected version expects seed at {expected_seed}")
             if not seed_matches_source(sample, args.sonic_version, cfg.commands['motion'].sonic_contract_id):
-                parser.error("seed provenance does not match selected SONIC version/source")
+                parser.error("seed provenance differs (version/source/point mapping/hand configuration); "
+                             "regenerate with orcs-pseudo-retarget --scene perloco-grail-stairs "
+                             f"--sonic-version {args.sonic_version} --all --overwrite")
 
         from mjlab.envs import ManagerBasedRlEnv
 
@@ -285,56 +288,84 @@ def main() -> None:
         gui_info = server.gui.add_markdown("")
 
         display_scale = _force_display_scale(seed)
+        foot_diagnostics = None
+        if args.scene == "perloco-grail-stairs":
+            import torch
+
+            from orcs.core.data.foot_quality import FootDiagnostics
+            from orcs.core.data.point_reference import scaled_smpl_targets
+            from orcs.core.data.seed_identity import STAIR_POINT_MAPPING
+            foot_diagnostics = FootDiagnostics(model)
+            mapped = scaled_smpl_targets(torch.as_tensor(smpl), seed.morphology_scale,
+                                         torch.as_tensor(origin), mapping=STAIR_POINT_MAPPING).numpy()
+            ankle_targets = server.scene.add_point_cloud(
+                "/quality/ankle_targets", mapped[0, [3, 6]], colors=(80, 255, 80), point_size=.045)
+            sole_markers = server.scene.add_point_cloud(
+                "/quality/sole_points", np.zeros((4, 3)), colors=(255, 80, 220), point_size=.025)
+
+
+        render_lock = RLock()
 
         def render(frame: int) -> None:
-            _set_qpos(data, robot, seed, frame, object_entity, origin=origin)
-            mujoco.mj_forward(model, data)
-            mj_scene.update_from_mjdata(data)
+            with render_lock:
+                _set_qpos(data, robot, seed, frame, object_entity, origin=origin)
+                mujoco.mj_forward(model, data)
+                mj_scene.update_from_mjdata(data)
 
-            joints = smpl[frame] + origin
-            smpl_points.points = joints
-            smpl_bones.points = _smpl_segments(joints)
-            smpl_points.visible = gui_smpl.value
-            smpl_bones.visible = gui_smpl.value
+                quality_text = ""
+                if foot_diagnostics is not None:
+                    measured = foot_diagnostics.measure(data)
+                    ankle_targets.points = mapped[frame, [3, 6]]
+                    sole_markers.points = measured['sole_points_w'].reshape(-1, 3)
+                    gap = measured['sole_gap_m'] * 1000
+                    quality_text = (f"\n\n**Contact diagnostics (not a pass/fail test)**\n\n"
+                                    f"heel/toe gap mm L `{gap[0].round(1)}` R `{gap[1].round(1)}`  \n"
+                                    f"geometry contact L/R `{measured['geometric_contact'].tolist()}`  \n"
+                                    f"foot pitch deg `{measured['foot_pitch_deg'].round(1)}`  \n"
+                                    f"penetration mm `{(measured['penetration_m']*1000).round(1)}`")
+                joints = smpl[frame] + origin
+                smpl_points.points = joints
+                smpl_bones.points = _smpl_segments(joints)
+                smpl_points.visible = gui_smpl.value
+                smpl_bones.visible = gui_smpl.value
 
-            points, colors = _force_arrows(seed, frame, display_scale, origin=origin)
-            force_arrows.points = points
-            force_arrows.colors = colors
-            force_arrows.visible = gui_forces.value
-            if object_target is not None and seed.object_target_pos_w is not None:
-                object_target.position = seed.object_target_pos_w[frame] + origin
-                object_target.visible = gui_target.value
-            if (
-                source_object is not None
-                and source_object_pos is not None
-                and source_object_quat is not None
-            ):
-                source_object.position = source_object_pos[frame] + origin
-                source_object.wxyz = source_object_quat[frame]
-                source_object.visible = gui_source_object.value
+                points, colors = _force_arrows(seed, frame, display_scale, origin=origin)
+                force_arrows.points = points
+                force_arrows.colors = colors
+                force_arrows.visible = gui_forces.value
+                if object_target is not None and seed.object_target_pos_w is not None:
+                    object_target.position = seed.object_target_pos_w[frame] + origin
+                    object_target.visible = gui_target.value
+                if (
+                    source_object is not None
+                    and source_object_pos is not None
+                    and source_object_quat is not None
+                ):
+                    source_object.position = source_object_pos[frame] + origin
+                    source_object.wxyz = source_object_quat[frame]
+                    source_object.visible = gui_source_object.value
 
-            force_norm = np.linalg.norm(seed.assist_force_w[frame], axis=-1)
-            object_force = (
-                float(np.linalg.norm(seed.object_assist_force_w[frame]))
-                if seed.object_assist_force_w is not None else 0.0
-            )
-            object_error = (
-                float(np.linalg.norm(seed.object_pos_w[frame] - source_object_pos[frame]))
-                if seed.object_pos_w is not None and source_object_pos is not None
-                else 0.0
-            )
-            gui_info.content = (
-                f"**frame {frame}/{seed.num_frames - 1}** · "
-                f"`{frame / seed.fps:.2f} s` · "
-                f"{'✅ valid' if seed.valid[frame] else '🚫 invalid'}\n\n"
-                f"body error mean/max: `{seed.body_tracking_error[frame].mean():.3f}` / "
-                f"`{seed.body_tracking_error[frame].max():.3f} m`  \n"
-                f"robot force max: `{force_norm.max():.1f} N` · "
-                f"object force: `{object_force:.1f} N` · "
-                f"budget scale: `{seed.assist_saturation[frame]:.3f}`  \n"
-                f"object source/seed error: `{object_error:.3f} m`"
-            )
-
+                force_norm = np.linalg.norm(seed.assist_force_w[frame], axis=-1)
+                object_force = (
+                    float(np.linalg.norm(seed.object_assist_force_w[frame]))
+                    if seed.object_assist_force_w is not None else 0.0
+                )
+                object_error = (
+                    float(np.linalg.norm(seed.object_pos_w[frame] - source_object_pos[frame]))
+                    if seed.object_pos_w is not None and source_object_pos is not None
+                    else 0.0
+                )
+                gui_info.content = (
+                    f"**frame {frame}/{seed.num_frames - 1}** · "
+                    f"`{frame / seed.fps:.2f} s` · "
+                    f"{'✅ finite state' if seed.valid[frame] else '🚫 non-finite state'}\n\n"
+                    f"body error mean/max: `{seed.body_tracking_error[frame].mean():.3f}` / "
+                    f"`{seed.body_tracking_error[frame].max():.3f} m`  \n"
+                    f"robot force max: `{force_norm.max():.1f} N` · "
+                    f"object force: `{object_force:.1f} N` · "
+                    f"budget scale: `{seed.assist_saturation[frame]:.3f}`  \n"
+                    f"object source/seed error: `{object_error:.3f} m`" + quality_text
+                )
         @gui_frame.on_update
         def _(_event) -> None:
             render(gui_frame.value)
