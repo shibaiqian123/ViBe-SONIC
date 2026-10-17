@@ -200,6 +200,9 @@ def main() -> None:
         server = viser.ViserServer(port=args.port)
         print(f"[view-seed] server bound on port {args.port}; building scene")
         mj_scene = ViserMujocoScene(server, model, num_envs=1)
+        # mjviser tracking recenters only its own geometry, not our SMPL/force
+        # overlays. Keep everything in the same world frame for alignment QA.
+        mj_scene.camera_tracking_enabled = False
         server.scene.add_grid("/ground", width=8.0, height=8.0)
 
         joints0 = smpl[0] + origin
