@@ -173,25 +173,79 @@ def fetch_files(root: Path, paths: list[str], revision: str) -> None:
     check_payload(root, paths)
 
 
+def _shading_assets(layer) -> set[str]:
+    """Identify asset-valued shader attributes, not arbitrary image-like paths."""
+    from pxr import Sdf
+    shading, other = set(), set(layer.GetCompositionAssetDependencies())
+
+    def assets(value):
+        if isinstance(value, Sdf.AssetPath):
+            return {value.path}
+        if isinstance(value, (list, tuple)) or type(value).__name__ == "AssetPathArray":
+            return {item.path for item in value if isinstance(item, Sdf.AssetPath)}
+        return set()
+
+    def visit(path):
+        attr = layer.GetObjectAtPath(path)
+        if not isinstance(attr, Sdf.AttributeSpec):
+            return
+        values = assets(attr.default)
+        for time in layer.ListTimeSamplesForPath(path):
+            values.update(assets(layer.QueryTimeSample(path, time)))
+        target = shading if attr.owner.typeName in {"Shader", "Material", "NodeGraph"} else other
+        target.update(values)
+
+    layer.Traverse(Sdf.Path.absoluteRootPath, visit)
+    return shading - other
+
+
 def usd_dependencies(root: Path, selection: dict) -> list[str]:
-    """Find authored references/textures, including unresolved relative paths."""
+    """Collect geometry dependencies; ignore shader-only textures/MDL programs.
+
+    Collision conversion reads mesh geometry, not rendering materials. Published
+    USDs can retain author-machine material paths. Never exempt composition
+    references or non-shader assets merely because their suffix looks visual.
+    """
     from pxr import Sdf, UsdUtils
     result = set()
-    for sample in selection["samples"]:
-        usd = root / sample["files"]["object_usd"]
-        layers, assets, unresolved = UsdUtils.ComputeAllDependencies(Sdf.AssetPath(str(usd)))
-        for value in [*(layer.realPath for layer in layers), *assets, *unresolved]:
+    shading_by_layer = {}
+    ignored = set()
+    visual_suffixes = {".mdl", ".jpg", ".jpeg", ".png", ".exr", ".tga", ".tif",
+                       ".tiff", ".bmp", ".hdr", ".webp", ".dds", ".ktx"}
+
+    def process(layer, info):
+        authored = info.assetPath
+        if layer.identifier not in shading_by_layer:
+            shading_by_layer[layer.identifier] = _shading_assets(layer)
+        shading = shading_by_layer[layer.identifier]
+        if authored in shading and Path(authored).suffix.lower() in visual_suffixes:
+            ignored.add(authored)
+            return UsdUtils.DependencyInfo("")
+        # Anchor unresolved paths to their authoring layer, not the root USD.
+        for value in (authored, *info.dependencies):
             if not value:
                 continue
-            candidate = Path(value)
+            candidate = Path(Sdf.ComputeAssetPathRelativeToLayer(layer, value))
             if not candidate.is_absolute():
-                candidate = usd.parent / candidate
+                candidate = Path(layer.realPath).parent / candidate
             candidate = candidate.resolve()
             try:
                 relative = candidate.relative_to(root.resolve()).as_posix()
             except ValueError as exc:
-                raise ValueError(f"USD dependency outside source repository: {value}") from exc
+                raise ValueError(f"USD dependency outside source repository: {value} "
+                                 f"(layer {layer.realPath})") from exc
             result.add(safe_path(relative))
+        return info
+
+    for sample in selection["samples"]:
+        usd = root / safe_path(sample["files"]["object_usd"])
+        if Sdf.Layer.FindOrOpen(str(usd)) is None:
+            raise ValueError(f"cannot open USD source: {usd}")
+        result.add(usd.relative_to(root).as_posix())
+        UsdUtils.ComputeAllDependencies(Sdf.AssetPath(str(usd)), processingFunc=process)
+    if ignored:
+        print(f"[USD] skipped {len(ignored)} shader-only texture/MDL dependencies "
+              "(collision geometry does not use materials)", flush=True)
     return sorted(result)
 
 
