@@ -38,6 +38,7 @@ import argparse
 import json
 import time
 from pathlib import Path
+from queue import Empty, SimpleQueue
 
 import mujoco
 import numpy as np
@@ -125,6 +126,8 @@ def main() -> None:
     state: dict = {"scene": None, "model": None, "data": None,
                    "clip": None, "playing": True}
 
+    selection_updates: SimpleQueue[str] = SimpleQueue()
+
     initial_levels = tuple(sorted(k.split("/")[1] for k in keys
                                   if tiles[k]["family"] == families[0]))
     initial_samples = tuple(p.parent.name for p in tiles[keys[0]]["clips"])
@@ -203,21 +206,40 @@ def main() -> None:
         mujoco.mj_forward(model, data)
         state["scene"].update_from_mjdata(data)
 
+    # Viser callbacks run outside the playback thread. They must never reset
+    # scene handles while that thread is using update_from_mjdata(). Ignore
+    # programmatic dropdown updates: the main thread completes those itself.
     @gui_family.on_update
     def _(_evt) -> None:
-        levels = _levels_of(gui_family.value)
-        gui_level.options = levels
-        if gui_level.value not in levels:
-            gui_level.value = levels[0]
-        _load_tile(_key())
+        if _evt.client_id is not None:
+            selection_updates.put("family")
 
     @gui_level.on_update
     def _(_evt) -> None:
-        _load_tile(_key())
+        if _evt.client_id is not None:
+            selection_updates.put("level")
 
     @gui_sample.on_update
     def _(_evt) -> None:
-        _load_clip(_key())
+        if _evt.client_id is not None:
+            selection_updates.put("sample")
+
+    def _apply_pending_selection() -> None:
+        changes = set()
+        while True:
+            try:
+                changes.add(selection_updates.get_nowait())
+            except Empty:
+                break
+        if "family" in changes:
+            levels = _levels_of(gui_family.value)
+            gui_level.options = levels
+            if gui_level.value not in levels:
+                gui_level.value = levels[0]
+        if changes & {"family", "level"}:
+            _load_tile(_key())
+        elif "sample" in changes:
+            _load_clip(_key())
 
     @gui_play.on_update
     def _(_evt) -> None:
@@ -247,6 +269,7 @@ def main() -> None:
     print(f"[view] http://localhost:{args.port}")
     t = 0.0
     while True:
+        _apply_pending_selection()
         if state["playing"] and state["clip"] is not None:
             t += gui_speed.value
             if t >= 1.0:
