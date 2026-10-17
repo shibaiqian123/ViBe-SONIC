@@ -1052,7 +1052,7 @@ def main() -> None:
     parser.add_argument(
         "--overwrite",
         action="store_true",
-        help="with --all, regenerate complete seed_state.npz files",
+        help="regenerate existing stair seed(s); with --all applies to the selected roster",
     )
     parser.add_argument("--object", default=None, help="object_motion npz for a raw clip")
     parser.add_argument(
@@ -1086,8 +1086,8 @@ def main() -> None:
                 overwrite=args.overwrite,
             )
         return
-    if args.overwrite:
-        parser.error("--overwrite requires --all")
+    if args.overwrite and args.source is None:
+        parser.error("--overwrite requires --source or --all")
     if args.scene in ("perloco-grail", "perloco-grail-stairs") and args.source is None:
         parser.error("--scene perloco-grail requires --source or --all")
     if args.scene in ("perloco-grail", "perloco-grail-stairs") and args.motion_set is not None:
