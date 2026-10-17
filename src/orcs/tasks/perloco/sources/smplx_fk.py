@@ -31,8 +31,10 @@ SONIC's encoder wants SMPL-24. Three conversions, each silently wrong-able:
                                 Do not "restore" the y-up rotation on the
                                 strength of a docstring.
 
-`betas` is all-zero in every GRAIL clip (`scale` 1.0), so the neutral template
-is the body — `predicted_body_height` is an unused HMR estimate, not a scale.
+GRAIL recon can contain a non-unit human `scale`, including stair samples.
+Apply it around the authored `trans`, as upstream retargeting does, before
+forming world-space or root-centred channels. Zero betas do not imply scale=1.
+`predicted_body_height` is not a substitute for the explicit scale.
 """
 
 from __future__ import annotations
@@ -96,6 +98,25 @@ def _model(model_dir: str, gender: str):
                         use_pca=False, flat_hand_mean=True, batch_size=1)
 
 
+def _scaled_world_joints(viz: np.ndarray, trans: np.ndarray, scale=1.0) -> np.ndarray:
+    """GRAIL contract: (SMPL-X joints - trans) * scale + trans.
+
+    Scale about the SMPL translation, not the regressed pelvis or world origin.
+    The published recon uses one positive scalar for the whole sequence.
+    """
+    value = np.asarray(scale, dtype=np.float32)
+    if value.size != 1 or not np.isfinite(value).all() or float(value.reshape(-1)[0]) <= 0:
+        raise ValueError("GRAIL human scale must be one finite positive scalar")
+    if trans.shape != (len(viz), 3) or viz.ndim != 3 or viz.shape[-1] != 3:
+        raise ValueError("GRAIL joints/trans shapes must be (T,J,3) and (T,3)")
+    if not np.isfinite(viz).all() or not np.isfinite(trans).all():
+        raise ValueError("GRAIL joints/trans contain non-finite values")
+    factor = float(value.reshape(-1)[0])
+    if factor == 1.0:
+        return viz.copy()  # Preserve legacy scale=1 results without roundoff.
+    return (viz - trans[:, None, :]) * factor + trans[:, None, :]
+
+
 def smpl_channels(
     recon_pkl: str | Path, model_dir: str | Path
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -127,6 +148,7 @@ def smpl_channels(
             **kw,
         )
     viz = out.joints.numpy()[:, _SMPLX_TO_SMPL24]          # (S, 24, 3) z-up world
+    viz = _scaled_world_joints(viz, trans, rec.get("scale", 1.0))
 
     root_q = _aa_to_quat(poses[:, 0:3])                     # already z-up (see header)
     joints = viz - viz[:, :1]                               # z-up, root-centred
