@@ -4,7 +4,12 @@ No simulator or task discovery imports. Unknown/dynamic transforms fail closed.
 """
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
+
+# Explicit metre bound for treating small source-physics drift as static.
+STATIC_TRANSLATION_TOLERANCE_M = 0.002
 
 
 def quaternion_matrix(q):
@@ -55,9 +60,23 @@ def static_object_transform(data: dict) -> tuple[np.ndarray, np.ndarray, np.ndar
     scale = scale.reshape(-1, 3)
     if not all(np.isfinite(x).all() for x in (pos, rot, scale)) or np.any(scale <= 0):
         raise ValueError("invalid stair pose/scale")
-    if not (np.allclose(pos, pos[0], atol=1e-3) and np.allclose(rot, rot[0], atol=1e-3)
-            and np.allclose(scale, scale[0], atol=1e-6)):
-        raise ValueError("moving stair asset cannot be staged as static terrain")
+    translation_drift = float(np.linalg.norm(pos - pos[0], axis=1).max())
+    rotation_drift = float(np.abs(rot - rot[0]).max())
+    scale_drift = float(np.abs(scale - scale[0]).max())
+    if not (translation_drift <= STATIC_TRANSLATION_TOLERANCE_M
+            and np.allclose(rot, rot[0], atol=1e-3, rtol=0)
+            and np.allclose(scale, scale[0], atol=1e-6, rtol=0)):
+        raise ValueError(
+            "moving stair asset cannot be staged as static terrain: "
+            f"translation={translation_drift * 1000:.3f} mm "
+            f"(limit {STATIC_TRANSLATION_TOLERANCE_M * 1000:.1f} mm), "
+            f"rotation_matrix_delta={rotation_drift:.6g}, scale_delta={scale_drift:.6g}")
+    if translation_drift > 0.001:
+        warnings.warn(
+            f"approximating stair drift of {translation_drift * 1000:.3f} mm "
+            "as static terrain at its first-frame pose (2 mm tolerance); "
+            "verify foot/terrain alignment in the viewer",
+            UserWarning, stacklevel=2)
     if not np.allclose(rot[0].T @ rot[0], np.eye(3), atol=1e-4) or np.linalg.det(rot[0]) < 0.99:
         raise ValueError("invalid object rotation matrix")
     return pos[0], rot[0], scale[0]

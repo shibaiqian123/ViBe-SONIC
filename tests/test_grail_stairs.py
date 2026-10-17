@@ -251,3 +251,28 @@ def test_usd_relative_texture_dependency_is_scoped(tmp_path):
     deps = fetch.usd_dependencies(tmp_path, selection)
     assert 'data/stair_p1/object_usd/textures/a.png' in deps
     assert all(not Path(p).is_absolute() for p in deps)
+
+
+def test_millimetre_stair_drift_is_explicit_static_approximation():
+    source = {'root_pos': [[[0, 0, 0]], [[0.00016, 0.00037, -0.00164]]],
+              'root_quat': [[[1, 0, 0, 0]], [[1, 0, 0, 0]]]}
+    with pytest.warns(UserWarning, match='first-frame pose'):
+        pos, _, _ = geometry.static_object_transform(source)
+    np.testing.assert_array_equal(pos, [0, 0, 0])
+
+
+def test_static_translation_bound_is_euclidean_and_origin_independent():
+    for start in ([0, 0, 0], [10000, 10000, 10000]):
+        pos = np.asarray(start, dtype=float)
+        with pytest.raises(ValueError, match='translation=.*limit 2.0 mm'):
+            geometry.static_object_transform({
+                'root_pos': [pos, pos + [.0015, .0015, 0]],
+                'root_quat': [[1, 0, 0, 0]] * 2})
+
+
+def test_stair_rotation_and_scale_still_rejected():
+    source = {'root_pos': [[0, 0, 0]] * 2, 'root_quat': [[1, 0, 0, 0]] * 2}
+    with pytest.raises(ValueError, match='moving'):
+        geometry.static_object_transform({**source, 'scale': [[1, 1, 1], [1.001, 1, 1]]})
+    with pytest.raises(ValueError, match='moving'):
+        geometry.static_object_transform({**source, 'root_quat': [[1, 0, 0, 0], [.99, .1, 0, 0]]})
