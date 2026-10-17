@@ -85,7 +85,8 @@ def test_heading_and_smpl_features_match_independent_rotations(torch):
             np.testing.assert_allclose(actual.numpy(), expected, atol=2e-6, rtol=1e-5)
 
 
-def test_zero_adapter_updates_only_trainable_weights_and_resume_guard(torch, tmp_path):
+@pytest.mark.parametrize("constructor_style", ["keyword", "runner_positional"])
+def test_zero_adapter_updates_only_trainable_weights_and_resume_guard(torch, tmp_path, constructor_style):
     pytest.importorskip('rsl_rl.models')
     from tensordict import TensorDict
 
@@ -102,7 +103,11 @@ def test_zero_adapter_updates_only_trainable_weights_and_resume_guard(torch, tmp
     kw = dict(obs=obs, obs_groups={'actor':['policy']}, obs_set='actor', output_dim=29,
               sonic_contract_id='ab'*32, tokenizer_width=64, encoder_hidden_dims=[16], decoder_hidden_dims=[16],
               base_checkpoint=str(path), freeze_base=True, rank=2, alpha=2.)
-    model = VersionedSonicWithAdapterModel(**kw)
+    if constructor_style == "runner_positional":
+        positional = [kw.pop(key) for key in ("obs", "obs_groups", "obs_set", "output_dim")]
+        model = VersionedSonicWithAdapterModel(*positional, **kw)
+    else:
+        model = VersionedSonicWithAdapterModel(**kw)
     from orcs.core.sonic.port import fsq
     expected = d(torch.cat([fsq(e(obs['tokenizer'])), obs['policy']], -1))
     actual = model(obs)

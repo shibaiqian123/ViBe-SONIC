@@ -6,13 +6,13 @@ from rsl_rl.models import SonicWithAdapterModel
 
 
 class VersionedSonicWithAdapterModel(SonicWithAdapterModel):
-    def __init__(self, *, sonic_contract_id: str, tokenizer_width: int, allow_legacy_resume: bool = False, **kwargs):
-        obs = kwargs['obs']
+    def __init__(self, obs, obs_groups, obs_set, output_dim, *, sonic_contract_id: str,
+                 tokenizer_width: int, allow_legacy_resume: bool = False, **kwargs):
         if obs['tokenizer'].shape[-1] != tokenizer_width or obs['policy'].shape[-1] != 930:
             raise ValueError('SONIC observation dimensions do not match selected checkpoint')
         self._allow_legacy_resume = allow_legacy_resume
         self._loading_base = True
-        super().__init__(**kwargs)
+        super().__init__(obs, obs_groups, obs_set, output_dim, **kwargs)
         self._loading_base = False
         identity = torch.tensor(list(bytes.fromhex(sonic_contract_id)), dtype=torch.uint8)
         self.register_buffer('_orcs_sonic_contract', identity)
