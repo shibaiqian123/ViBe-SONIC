@@ -26,7 +26,7 @@ from typing import Protocol, runtime_checkable
 import numpy as np
 
 __all__ = [
-    "BoxSpec", "HFieldSpec", "TileSpec", "ClipSpec", "SmplSpec",
+    "BoxSpec", "HFieldSpec", "MeshSpec", "TileSpec", "ClipSpec", "SmplSpec",
     "TerrainMotionSource", "box_from_vertices",
 ]
 
@@ -61,6 +61,14 @@ class HFieldSpec:
 
 
 @dataclass(frozen=True)
+class MeshSpec:
+    """One convex collision piece in tile-local metres (not a whole stair hull)."""
+
+    vertices: np.ndarray
+    faces: np.ndarray
+
+
+@dataclass(frozen=True)
 class TileSpec:
     """One terrain patch, and where it lands in the sub-terrain grid.
 
@@ -75,6 +83,8 @@ class TileSpec:
     level: float
     boxes: tuple[BoxSpec, ...] = ()
     hfield: HFieldSpec | None = None
+    meshes: tuple[MeshSpec, ...] = ()
+    size: tuple[float, float] | None = None
 
     @property
     def key(self) -> str:

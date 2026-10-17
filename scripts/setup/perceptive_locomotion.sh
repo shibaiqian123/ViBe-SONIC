@@ -35,7 +35,10 @@ from orcs.cli.stage_terrain_motions import main
 main()')
 
 SOURCES="omni,grail"
-GRAIL_CATEGORIES="curb"     # stair1/stair2 land here when a roster wants them
+GRAIL_CATEGORIES="curb"
+GRAIL_ROSTER=""
+STAIR_SELECTION=""
+STAIRS=0
 WITH_VIDEO=0                # curb: 1.1 GB without, 14 GB with, and nothing reads it
 WITH_SMPL=1                 # the -Smpl command space; needs the SMPL-X models
 SKIP_CLONE=0
@@ -47,7 +50,9 @@ usage() {
     cat <<'EOF'
 
   --sources omni,grail      which datasets           (default: both)
-  --grail-categories curb   GRAIL terrain categories (default: curb)
+  --grail-categories LIST   curb (default), or stair1,stair2 (aliases for stair_p1,stair_p2)
+  --roster FILE             custom GRAIL TOML selector (stairs: first 2 families x 2 clips per category)
+  --selection FILE          stair selection receipt; fixed source SHA and exact sample IDs
   --with-video              keep GRAIL's video/ dir  (+13 GB, unread)
   --no-smpl                 skip SMPL-X and GRAIL's recon/; -Smpl task
                             will not register
@@ -62,6 +67,8 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --sources)           SOURCES="$2"; shift 2 ;;
         --grail-categories)  GRAIL_CATEGORIES="$2"; shift 2 ;;
+        --roster)            GRAIL_ROSTER="$2"; shift 2 ;;
+        --selection)         STAIR_SELECTION="$2"; shift 2 ;;
         --with-video)        WITH_VIDEO=1; shift ;;
         --no-smpl)           WITH_SMPL=0; shift ;;
         --skip-clone)        SKIP_CLONE=1; shift ;;
@@ -73,6 +80,12 @@ while [ $# -gt 0 ]; do
 done
 
 has() { [[ ",$SOURCES," == *",$1,"* ]]; }
+if [ "$GRAIL_CATEGORIES" != curb ]; then
+    # Validate before importing simulator packages or writing anything.
+    GRAIL_CATEGORIES=$(PYTHONPATH="$REPO_ROOT/src${PYTHONPATH:+:$PYTHONPATH}" python -c \
+        'import sys; from orcs.cli.grail_stairs import categories; print(",".join(categories(sys.argv[1])))' "$GRAIL_CATEGORIES")
+    STAIRS=1
+fi
 
 # Roots come from orcs.core.paths, never from path math here — so ORCS_DATA_ROOT
 # / ORCS_DEPS_ROOT move the download exactly like they move the runtime lookup.
@@ -110,11 +123,13 @@ command -v git-lfs &>/dev/null || { echo "[ERROR] git-lfs not on PATH"; exit 1; 
 # scope AND the staging flags, so a roster edit changes both and neither can
 # drift. tomllib only, no orcs import, so stdout carries the answer alone.
 roster_read() {
+    local roster="$ROSTER_DIR/$1.toml"
+    if [ "$1" = grail ] && [ -n "$GRAIL_ROSTER" ]; then roster="$GRAIL_ROSTER"; fi
     python -c '
 import sys, tomllib
 spec = tomllib.loads(open(sys.argv[1], "rb").read().decode())
 v = spec.get(sys.argv[2], "*")
-print("" if v == "*" else " ".join(map(str, v)))' "$ROSTER_DIR/$1.toml" "$2"
+print("" if v == "*" else " ".join(map(str, v)))' "$roster" "$2"
 }
 roster_families() { roster_read "$1" families; }
 
@@ -168,7 +183,7 @@ if [ "$SKIP_CLONE" = 0 ] && has omni; then
         '/robot-terrain.zip' '/models/' '/visualize.py' '/README.md'
 fi
 
-if [ "$SKIP_CLONE" = 0 ] && has grail; then
+if [ "$SKIP_CLONE" = 0 ] && [ "$STAIRS" = 0 ] && has grail; then
     # ONLY the three dirs GrailSource opens: robot/ (the retargeted clip),
     # object_usd/ (tile geometry, and NOT lfs — it rides the checkout) and
     # recon/ (the SMPL-X human — fetched only with SMPL). objects/ and meta/ are lfs
@@ -196,6 +211,18 @@ if [ "$SKIP_CLONE" = 0 ] && has grail; then
         "$DATA_ROOT/PhysicalAI-Robotics-Locomanipulation-GRAIL" \
         "$(IFS=,; echo "${lfs[*]}")" \
         '/README.md' "${patterns[@]}"
+fi
+
+# Stair fetching uses a pinned, exact receipt; no full-category LFS pull.
+if [ "$STAIRS" = 1 ] && has grail; then
+    GRAIL_ROSTER="${GRAIL_ROSTER:-$ROSTER_DIR/grail_stairs.toml}"
+    STAIR_SELECTION="${STAIR_SELECTION:-$DATA_ROOT/GRAIL-stairs-selection.json}"
+    stair_args=(--root "$DATA_ROOT/GRAIL-stairs" --selection "$STAIR_SELECTION"
+                --roster "$GRAIL_ROSTER" --categories "$GRAIL_CATEGORIES")
+    [ "$WITH_SMPL" = 0 ] && stair_args+=(--no-smpl)
+    [ "$WITH_VIDEO" = 1 ] && stair_args+=(--with-video)
+    [ "$SKIP_CLONE" = 1 ] && stair_args+=(--skip-clone)
+    python -m orcs.cli.grail_stairs "${stair_args[@]}"
 fi
 
 # ── 2. SMPL-X body models — download if registered, else the manual gate ────
@@ -236,22 +263,33 @@ smplx_download() {
     return 0
 }
 
-if [ "$WITH_SMPL" = 1 ]; then
+required_models=(NEUTRAL)
+[ "$STAIRS" = 1 ] && required_models=(NEUTRAL MALE FEMALE)
+models_missing() {
+    local model
+    for model in "${required_models[@]}"; do
+        [ -f "$SMPLX_DIR/smplx/SMPLX_${model}.npz" ] || return 0
+    done
+    return 1
+}
+
+if [ "$WITH_SMPL" = 1 ] && has grail; then
     echo
     echo "=== SMPL-X body models ==="
     mkdir -p "$SMPLX_DIR/smplx"
-    if [ ! -f "$SMPLX_DIR/smplx/SMPLX_NEUTRAL.npz" ] && [ -n "${SMPLX_USER:-}" ] \
+    if models_missing && [ -n "${SMPLX_USER:-}" ] \
        && [ -n "${SMPLX_PASS:-}" ]; then
         smplx_download
     fi
-    while [ ! -f "$SMPLX_DIR/smplx/SMPLX_NEUTRAL.npz" ]; do
+    while models_missing; do
         cat <<EOF
 [ MANUAL ] SMPL-X is licensed — download it yourself, we cannot fetch it.
 
   1. register + download "SMPL-X v1.1 (NPZ+PKL)" from https://smpl-x.is.tue.mpg.de
   2. unzip so that this path exists:
 
-       $SMPLX_DIR/smplx/SMPLX_NEUTRAL.npz
+       $SMPLX_DIR/smplx/SMPLX_<GENDER>.npz
+       Required genders: ${required_models[*]}
 
   (ORCS_SMPLX_DIR overrides that location for both this script and staging.)
   (Registered? SMPLX_USER=<email> SMPLX_PASS=<password> re-run downloads it.)
@@ -275,6 +313,12 @@ if [ "$SKIP_STAGE" = 0 ]; then
         echo
         echo "=== stage $s ==="
         args=()
+        if [ "$s" = grail ] && [ "$STAIRS" = 1 ]; then
+            args=(--source grail_stairs --root "$DATA_ROOT/GRAIL-stairs" --selection "$STAIR_SELECTION")
+            [ "$WITH_SMPL" = 1 ] && args+=(--smpl)
+            "${STAGE[@]}" "${args[@]}"
+            continue
+        fi
         for key in families levels; do
             read -r -a vals <<< "$(roster_read "$s" "$key")"
             [ ${#vals[@]} -gt 0 ] && args+=("--$key" "${vals[@]}")
@@ -294,3 +338,12 @@ import orcs
 from mjlab.tasks.registry import list_tasks
 print("\n".join(t for t in list_tasks() if "PerLoco" in t) or "  (none)")
 print("skip reason:", orcs.tasks.perloco.SKIP_REASON)'
+
+if [ "$STAIRS" = 1 ] && has grail; then
+    echo "[stairs] selection: $STAIR_SELECTION"
+    echo "[stairs] conversion report: $DATA_ROOT/terrain_motions/grail_stairs/stage_report.json"
+    echo "[stairs] missing SMPL seeds are expected; download/staging does not generate them."
+    echo "Next: orcs-pseudo-retarget --scene perloco-grail-stairs --all"
+    echo "View: orcs-view-terrain --source grail_stairs"
+    echo "Task: play Orcs-PerLoco-GrailStairs-AdaptSonic --agent initial"
+fi

@@ -120,6 +120,19 @@ class TileTerrainCfg(SubTerrainCfg):
                 ),
                 color=box_rgba,
             ))
+        for index, mesh in enumerate(tile.get("meshes", [])):
+            # Geometry already includes source scale and pose, in tile-local metres.
+            import hashlib
+            digest = hashlib.sha256(json.dumps(mesh, sort_keys=True).encode()).hexdigest()[:20]
+            mesh_name = f"stair_{digest}_{index}"
+            if spec.mesh(mesh_name) is None:
+                spec.add_mesh(name=mesh_name,
+                              uservert=np.asarray(mesh["vertices"], dtype=float).reshape(-1).tolist(),
+                              userface=np.asarray(mesh["faces"], dtype=int).reshape(-1).tolist())
+            geoms.append(TerrainGeometry(
+                geom=body.add_geom(type=mujoco.mjtGeom.mjGEOM_MESH, meshname=mesh_name,
+                                   pos=(cx, cy, 0.0), rgba=box_rgba), color=box_rgba,
+            ))
         # Spawn origin == the staged tile's own origin, so RSI is
         # `clip.root_pos + env_origins` and nothing else.
         return TerrainOutput(origin=np.array([cx, cy, 0.0]), geometries=geoms)
@@ -162,3 +175,15 @@ def terrain_generator_cfg(
             for f in roster.families
         },
     )
+
+
+def staged_tile_size(root: str | Path) -> tuple[float, float]:
+    """Use the same maximum footprint for training and single-tile playback."""
+    sizes = [json.loads(p.read_text()).get("size", TILE_SIZE)
+             for p in Path(root).glob("*/level_*/tile.json")]
+    if not sizes:
+        raise FileNotFoundError(f"no staged terrain under {root}")
+    size = np.max(np.asarray(sizes, dtype=float), axis=0)
+    if size.shape != (2,) or not np.isfinite(size).all() or np.any(size <= 0):
+        raise ValueError("invalid staged tile size")
+    return tuple(float(x) for x in size)

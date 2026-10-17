@@ -79,6 +79,9 @@ dev = ["pytest>=8.0", "ruff>=0.4"]
 # Staging-time only — the runtime never imports these, so a training env that
 # consumes already-staged data does not need them.
 perloco = [
+    "coacd>=1.0,<2",  # general stair mesh collision decomposition
+    "trimesh>=4,<6",
+    "scipy",
     "usd-core",   # GRAIL tile geometry (`from pxr import Usd`)
     "viser",      # orcs-view-terrain
 ]

@@ -82,3 +82,62 @@ train Orcs-PerLoco-OmRe-AdaptSonic --env.scene.num-envs 4096
 - **出现 `No module named pxr` 或 `smplx`**：重新运行 `scripts/setup/sync_deps.sh`，不要添加 `--no-smpl`，以确保相关工具和固定版本的 `rsl_rl` 分支在最后的安装步骤中正确安装。
 - **Git LFS 指针文件被当成实际数据解析**：安装 Git LFS，然后重新运行安装脚本。不要在完整的 GRAIL 数据集仓库中执行不限定下载范围的 `git lfs pull`。
 - **找不到某个任务**：查看 `orcs.tasks.perloco.SKIP_REASON`。注册流程会跳过缺少数据集的任务，而不会让 `import orcs` 失败。
+
+## GRAIL 楼梯：在服务器准备数据
+
+楼梯使用独立清单、输出目录和任务，原 curb 流程保持不变。
+`stair1`、`stair2` 分别是官方 `stair_p1`、`stair_p2` 的别名；一次调用不要混合 curb 和楼梯。
+
+激活已安装 `perloco,smpl` 可选依赖的项目环境后，在服务器运行：
+
+```bash
+export ORCS_DATA_ROOT=/data/orcs/datasets
+export ORCS_DEPS_ROOT=/data/orcs/dependencies
+bash scripts/setup/perceptive_locomotion.sh \
+  --sources grail --grail-categories stair1,stair2 --yes
+```
+
+默认清单 `rosters/grail_stairs.toml` 按名称排序，从每包选择前两个配套文件完整的 family，
+每个选择两段动作。“完整”只表示源文件齐全，不代表动作质量合格，也不代表全是上楼动作。
+训练前必须回放筛选；`--with-video` 仅下载所选样本的视频。
+
+首次运行会保存 `$ORCS_DATA_ROOT/GRAIL-stairs-selection.json`，记录固定的源提交、
+样本 ID 和资产依赖。后续运行复用该清单，不自动跟随远端变化。
+`--roster /path/selector.toml` 可指定自定义选择器：使用 `[[samples]]` 列出 category 和 stem，
+或修改每包 family 数和每个 family 的片段数。只有明确需要全量数据时才设置 `all_samples = true`。
+修改选择器后使用新的 `--selection /path/receipt.json`；也可在选择器中指定 `revision` 提交 SHA。
+
+原始文件存入 `GRAIL-stairs/`，转换结果存入 `terrain_motions/grail_stairs/`。
+每条动作对应独立地形 ID，避免不同 take 的缩放、位置不一致却共用地形。
+输出目录的 `roster.toml` 只选择本次清单，`stage_report.json` 记录完成、缓存命中和失败样本。
+转换失败会阻止楼梯任务注册，而不是静默使用部分数据。
+
+- `--no-smpl`：不下载人体重建，不检查授权人体模型。
+- `--skip-clone`：使用已有清单及完整本地文件转换。
+- `--skip-stage`：仅下载，不代表新任务已经可运行。
+- 下载脚本不会自动生成 seed。
+
+转换器处理 USD 单位、坐标轴、层级变换及物体静态姿态和缩放。
+规则实心长方体保持为长方体；其他封闭网格通过 CoACD 转为多个凸碰撞体，不使用整个楼梯的单一凸包。
+动态资产、无法确定姿态格式、未支持的实例和无效网格会明确报错。
+凸分解仍有近似误差，服务器验收必须检查台阶边缘和碰撞面。
+人体与机器人保留现有 GRAIL 按动作阶段对齐的规则；端点检查只能发现明显错位，不能替代回放。
+
+```bash
+orcs-view-terrain --source grail_stairs
+play Orcs-PerLoco-GrailStairs-AdaptSonic --agent initial --viewer native
+orcs-pseudo-retarget --scene perloco-grail-stairs --all
+# 将 <tile> 替换为 stage_report.json 中的地形 ID。
+orcs-view-seeds --scene perloco-grail-stairs \
+  --source /data/orcs/datasets/terrain_motions/grail_stairs/<tile>/level_0.00/sample0
+play Orcs-PerLoco-GrailStairs-AdaptSonic-Smpl --agent initial --viewer native
+train Orcs-PerLoco-GrailStairs-AdaptSonic-Smpl --env.scene.num-envs 64
+```
+
+缺少有效 seed 时，SMPL 任务跳过是正常现象。seed 保存源内容校验记录；动作、元数据或地形改变后，
+旧 seed 不再有效。转换结果更新时不会保留上一版本的 seed。
+这两个任务仍使用现有 ORCS SONIC 权重和高度扫描，未引入 SONIC v1.1 或深度视觉落脚控制器。
+
+服务器应先验证两个分包的小样本：对齐、碰撞面、初始化、reset/step 和 seed 回放。
+一般网格和较大地形网格的显存成本不同，不要直接从 4096 环境起步。
+本地契约测试不代表真实数据转换、GPU 运行或策略收敛已经通过验证。

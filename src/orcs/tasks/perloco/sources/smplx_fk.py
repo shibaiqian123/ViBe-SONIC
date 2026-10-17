@@ -108,7 +108,10 @@ def smpl_channels(
     import torch
 
     d = joblib.load(recon_pkl)
-    rec = d[next(iter(d))] if "poses" not in d else d
+    rec = d.get("human_data", d)
+    rec = rec[next(iter(rec))] if "poses" not in rec else rec
+    if rec.get("model_type", "smplx") != "smplx":
+        raise ValueError("GRAIL SMPL staging requires SMPL-X source parameters")
     poses = np.asarray(rec["poses"], np.float32)
     trans = np.asarray(rec["trans"], np.float32)
     betas = np.asarray(rec["betas"], np.float32).reshape(1, -1)

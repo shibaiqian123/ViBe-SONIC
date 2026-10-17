@@ -6,6 +6,7 @@ GPU and every dataset quirk stays out of the runtime.
 """
 
 from orcs.tasks.perloco.sources.grail import GrailSource  # noqa: F401
+from orcs.tasks.perloco.sources.grail_stairs import GrailStairsSource
 from orcs.tasks.perloco.sources.omni import OmniRetargetSource  # noqa: F401
 
-SOURCES = {"omni": OmniRetargetSource, "grail": GrailSource}
+SOURCES = {"grail_stairs": GrailStairsSource, "omni": OmniRetargetSource, "grail": GrailSource}

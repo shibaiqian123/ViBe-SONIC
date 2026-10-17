@@ -98,7 +98,7 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument(
-        "--scene", choices=("uolm", "perloco-grail"), default="uolm"
+        "--scene", choices=("uolm", "perloco-grail", "perloco-grail-stairs"), default="uolm"
     )
     parser.add_argument(
         "--motion-set",

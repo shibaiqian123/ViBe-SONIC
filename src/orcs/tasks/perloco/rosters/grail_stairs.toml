@@ -1,0 +1,14 @@
+# Fetch selector. First successful resolution is pinned in selection.json.
+# Existing receipts reject changed selectors instead of silently changing data.
+revision = "HEAD"
+families_per_category = 2
+clips_per_family = 2
+
+# Runtime selection: only completely staged samples under grail_stairs.
+families = "*"
+levels = [0.0]
+
+# To pick exact source samples instead of the defaults:
+# [[samples]]
+# category = "stair_p2"
+# stem = "terrain_stairs__stairs_1239__0000"

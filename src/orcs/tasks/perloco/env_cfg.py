@@ -135,7 +135,7 @@ def _resolve(
 
 
 @lru_cache(maxsize=None)
-def _resolve_grail_smpl_seeds(roster_path: str | None) -> tuple[Roster, str, int]:
+def _resolve_grail_smpl_seeds(roster_path: str | None, source: str = "grail") -> tuple[Roster, str, int]:
     """The rectangular subset with complete SMPL + kinematic retarget data.
 
     Phase-1 generation is intentionally resumable, so a partial seed dataset
@@ -143,8 +143,8 @@ def _resolve_grail_smpl_seeds(roster_path: str | None) -> tuple[Roster, str, int
     selected level has at least one complete clip.  GRAIL has one level today;
     spelling the rectangular rule keeps terrain columns and clip masks honest.
     """
-    root = staged_root("grail")
-    requested = load_roster("grail", root, roster_path)
+    root = staged_root(source)
+    requested = load_roster(source, root, roster_path)
     ready_by_key: dict[str, tuple[str, ...]] = {}
     lengths: dict[tuple[str, str], int] = {}
 
@@ -165,6 +165,13 @@ def _resolve_grail_smpl_seeds(roster_path: str | None) -> tuple[Roster, str, int
                 # not an import-time package error.  The batch CLI will
                 # regenerate them under the current seed contract.
                 continue
+            if source == "grail_stairs":
+                from orcs.core.data.seed_receipt import seed_matches_source
+                if not seed_matches_source(sample):
+                    continue
+            with np.load(sample / "smpl_motion.npz") as human:
+                if seed.num_frames != len(human["smpl_joints"]):
+                    continue
             if not seed.valid.all():
                 continue
             ready.append(sample.name)
@@ -181,7 +188,7 @@ def _resolve_grail_smpl_seeds(roster_path: str | None) -> tuple[Roster, str, int
     if not families:
         raise FileNotFoundError(
             f"no complete GRAIL SMPL seed clips under {root}; run "
-            "orcs-pseudo-retarget --scene perloco-grail --source <sample-dir>"
+            f"orcs-pseudo-retarget --scene {'perloco-grail-stairs' if source == 'grail_stairs' else 'perloco-grail'} --all"
         )
     clips = {
         key: ready_by_key[key]
@@ -393,6 +400,7 @@ def grail_env_cfg(
     command_space: str = "robot",
     play: bool = False,
     roster: str | None = None,
+    _source: str = "grail",
     scan_frame: str = "pelvis",
     tile_size: tuple[float, float] = GRAIL_TILE_SIZE,
     num_steps_per_env: int = 24,
@@ -418,9 +426,9 @@ def grail_env_cfg(
     roughly its p90 and kills divergence, not the behaviour. (`bad_anchor_pos`
     is pelvis-z drift, not a 3-D tube.)
     """
-    r, motion_file, max_len = _resolve("grail", roster, command_space == "smpl")
+    r, motion_file, max_len = _resolve(_source, roster, command_space == "smpl")
     return _core(
-        "grail", r, motion_file, max_len,
+        _source, r, motion_file, max_len,
         agent=agent, play=play, scan_frame=scan_frame, tile_size=tile_size,
         num_steps_per_env=num_steps_per_env, robot_cfg=robot_cfg,
         kill_bodies=kill_bodies, kill_exclude=kill_exclude,
@@ -445,6 +453,7 @@ def grail_smpl_env_cfg(
     *,
     play: bool = False,
     roster: str | None = None,
+    _source: str = "grail",
     scan_frame: str = "pelvis",
     tile_size: tuple[float, float] = GRAIL_TILE_SIZE,
     num_steps_per_env: int = 24,
@@ -459,9 +468,9 @@ def grail_smpl_env_cfg(
     ``seed_state.npz`` supplies the reset state and initial action history; the
     upstream GRAIL robot retarget is not a teacher trajectory.
     """
-    r, motion_file, max_len = _resolve_grail_smpl_seeds(roster)
+    r, motion_file, max_len = _resolve_grail_smpl_seeds(roster, _source)
     cfg = _core(
-        "grail",
+        _source,
         r,
         motion_file,
         max_len,
@@ -511,3 +520,28 @@ def _play_overrides(cfg: ManagerBasedRlEnvCfg) -> None:
     for k in ("bad_anchor_pos", "bad_anchor_ori"):
         cfg.terminations.pop(k, None)
     cfg.commands["motion"].start_from_zero = True
+
+
+def grail_stairs_env_cfg(*, play: bool = False, roster: str | None = None,
+                         command_space: str = "robot") -> ManagerBasedRlEnvCfg:
+    from orcs.tasks.perloco.terrain import staged_tile_size
+    root = staged_root("grail_stairs")
+    import json
+    report = json.loads((root / "stage_report.json").read_text())
+    if report.get("failed") or report.get("status") != "complete":
+        raise FileNotFoundError(f"stair staging incomplete; inspect {root / 'stage_report.json'}")
+    roster = roster or str(root / "roster.toml")
+    return grail_env_cfg(play=play, roster=roster, command_space=command_space,
+                         _source="grail_stairs", tile_size=staged_tile_size(root))
+
+
+def grail_stairs_smpl_env_cfg(*, play: bool = False, roster: str | None = None) -> ManagerBasedRlEnvCfg:
+    from orcs.tasks.perloco.terrain import staged_tile_size
+    root = staged_root("grail_stairs")
+    import json
+    report = json.loads((root / "stage_report.json").read_text())
+    if report.get("failed") or report.get("status") != "complete":
+        raise FileNotFoundError(f"stair staging incomplete; inspect {root / 'stage_report.json'}")
+    roster = roster or str(root / "roster.toml")
+    return grail_smpl_env_cfg(play=play, roster=roster, _source="grail_stairs",
+                              tile_size=staged_tile_size(root))

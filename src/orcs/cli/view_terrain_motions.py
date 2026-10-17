@@ -48,7 +48,7 @@ from mocke.mdp.joint_maps import IL2MJ
 
 from orcs.assets import get_g1_flat_hand_cfg
 from orcs.core.paths import DATA_ROOT
-from orcs.tasks.perloco.terrain import TILE_SIZE, TileTerrainCfg
+from orcs.tasks.perloco.terrain import TileTerrainCfg, staged_tile_size
 
 
 def _tiles(root: Path) -> dict[str, dict]:
@@ -77,7 +77,7 @@ def _build_model(root: Path, family: str, level: float) -> mujoco.MjModel:
     spec = Entity(get_g1_flat_hand_cfg()).spec
     spec.worldbody.add_body(name="terrain")
     TileTerrainCfg(
-        root=root, family=family, levels=(level,), size=TILE_SIZE,
+        root=root, family=family, levels=(level,), size=staged_tile_size(root),
     ).function(0.0, spec, np.random.default_rng(0))
     return spec.compile()
 
@@ -98,7 +98,8 @@ def main() -> None:
     # Tile-local offset of the tile's own origin — what `env_origins` supplies
     # at runtime. Applying it HERE is what makes the viewer's robot-vs-terrain
     # placement the same arithmetic RSI does.
-    origin = np.array([0.5 * TILE_SIZE[0], 0.5 * TILE_SIZE[1], 0.0])
+    tile_size = staged_tile_size(root)
+    origin = np.array([0.5 * tile_size[0], 0.5 * tile_size[1], 0.0])
     print(f"[view] {len(keys)} tiles, {len(families)} families — {root}")
 
     server = viser.ViserServer(port=args.port)

@@ -45,12 +45,12 @@ def _sample_dir(path: Path) -> Path:
     return path.parent if path.name == "smpl_motion.npz" else path
 
 
-def _selected_grail_samples() -> list[Path]:
+def _selected_grail_samples(source: str = "grail") -> list[Path]:
     """Return every staged sample selected by the packaged GRAIL roster."""
     from orcs.tasks.perloco.roster import load_roster
 
-    root = DATA_ROOT / "terrain_motions" / "grail"
-    roster = load_roster("grail", root)
+    root = DATA_ROOT / "terrain_motions" / source
+    roster = load_roster(source, root, root / "roster.toml" if source == "grail_stairs" else None)
     samples = [
         motion.parent
         for key in roster.tile_keys
@@ -77,6 +77,10 @@ def _seed_is_complete(sample: Path) -> bool:
             num_source_frames = int(source["smpl_joints"].shape[0])
     except (FileNotFoundError, KeyError, OSError, ValueError):
         return False
+    if "grail_stairs" in sample.parts:
+        from orcs.core.data.seed_receipt import seed_matches_source
+        if not seed_matches_source(sample):
+            return False
     return seed.num_frames == num_source_frames and bool(seed.valid.all())
 
 
@@ -111,9 +115,9 @@ def _object_seed_is_complete(sample: Path) -> bool:
     return seed.object_pos_w is not None and not source_is_newer
 
 
-def _run_grail_batch(*, device: str | None, overwrite: bool) -> None:
+def _run_grail_batch(*, device: str | None, overwrite: bool, source: str = "grail") -> None:
     """Retarget the full roster in one vectorized mjlab rollout."""
-    samples = _selected_grail_samples()
+    samples = _selected_grail_samples(source)
     pending = [
         sample for sample in samples if overwrite or not _seed_is_complete(sample)
     ]
@@ -127,7 +131,7 @@ def _run_grail_batch(*, device: str | None, overwrite: bool) -> None:
         return
 
     run_device = device or ("cuda:0" if torch.cuda.is_available() else "cpu")
-    failures = _run_grail_vectorized(pending, device=run_device)
+    failures = _run_grail_vectorized(pending, device=run_device, source=source)
 
     # A bad reconstruction should not throw away a successful vectorized
     # corpus.  Retry only the exceptional worlds in isolation so their full
@@ -140,7 +144,7 @@ def _run_grail_batch(*, device: str | None, overwrite: bool) -> None:
             "-m",
             "orcs.cli.pseudo_retarget",
             "--scene",
-            "perloco-grail",
+            "perloco-grail-stairs" if source == "grail_stairs" else "perloco-grail",
             "--source",
             str(sample),
         ]
@@ -160,7 +164,7 @@ def _run_grail_batch(*, device: str | None, overwrite: bool) -> None:
         raise SystemExit(1)
 
 
-def _run_grail_vectorized(samples: list[Path], *, device: str) -> list[Path]:
+def _run_grail_vectorized(samples: list[Path], *, device: str, source: str = "grail") -> list[Path]:
     """Run one pending GRAIL sample per mjlab environment.
 
     Clip lengths are ragged: completed worlds hold their last source frame
@@ -168,9 +172,11 @@ def _run_grail_vectorized(samples: list[Path], *, device: str) -> list[Path]:
     """
     from orcs.tasks.perloco.env_cfg import grail_env_cfg
 
-    cfg = grail_env_cfg(
-        agent="sonic", command_space="smpl", play=True, roster=None
-    )
+    if source == "grail_stairs":
+        from orcs.tasks.perloco.env_cfg import grail_stairs_env_cfg
+        cfg = grail_stairs_env_cfg(command_space="smpl", play=True)
+    else:
+        cfg = grail_env_cfg(agent="sonic", command_space="smpl", play=True, roster=None)
     cfg.scene.num_envs = len(samples)
     cfg.episode_length_s = 1e6
     cfg.terminations = {}
@@ -323,6 +329,8 @@ def _run_vectorized_corpus(
                 env_id=env_id,
             )
             seed.save(sample / "seed_state.npz")
+            from orcs.core.data.seed_receipt import write_seed_receipt
+            write_seed_receipt(sample)
             if not seed.valid.all():
                 failed.append(sample)
 
@@ -593,8 +601,8 @@ def _isolated_flat_dataset(sample: Path) -> Iterator[tuple[Path, Path]]:
         yield root, mirrors[0]
 
 
-def _grail_roster(sample: Path, stack: ExitStack) -> str:
-    root = DATA_ROOT / "terrain_motions" / "grail"
+def _grail_roster(sample: Path, stack: ExitStack, source: str = "grail") -> str:
+    root = DATA_ROOT / "terrain_motions" / source
     try:
         relative = sample.resolve().relative_to(root.resolve())
     except ValueError as exc:
@@ -661,10 +669,13 @@ def _build_cfg(
     else:
         from orcs.tasks.perloco.env_cfg import grail_env_cfg
 
-        roster = _grail_roster(sample, stack)
-        cfg = grail_env_cfg(
-            agent="sonic", command_space="smpl", play=True, roster=roster
-        )
+        source = "grail_stairs" if scene == "perloco-grail-stairs" else "grail"
+        roster = _grail_roster(sample, stack, source)
+        if source == "grail_stairs":
+            from orcs.tasks.perloco.env_cfg import grail_stairs_env_cfg
+            cfg = grail_stairs_env_cfg(command_space="smpl", play=True, roster=roster)
+        else:
+            cfg = grail_env_cfg(agent="sonic", command_space="smpl", play=True, roster=roster)
         object_name = None
 
     cfg.scene.num_envs = 1
@@ -824,7 +835,7 @@ class _Recorder:
             # This state was realized by MuJoCo, whose hard constraints already
             # bound the joints.  Soft-limit proximity is a training cost, not a
             # reason to break the source/seed coverage contract.
-            "valid": bool(finite[0].item()),
+            "valid": bool(finite[env_id].item()),
         }
         if self.controller.object is not None:
             obj = self.controller.object
@@ -958,6 +969,9 @@ def _run(
             capture_steps=capture_steps,
         )
         seed.save(output)
+        if output.resolve() == (sample / "seed_state.npz").resolve():
+            from orcs.core.data.seed_receipt import write_seed_receipt
+            write_seed_receipt(sample)
         return seed
     finally:
         raw_env.close()
@@ -971,7 +985,7 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument(
-        "--scene", choices=("uolm", "perloco-grail"), default="uolm"
+        "--scene", choices=("uolm", "perloco-grail", "perloco-grail-stairs"), default="uolm"
     )
     parser.add_argument(
         "--source",
@@ -1006,10 +1020,11 @@ def main() -> None:
     if args.all_data:
         if args.source is not None or args.output is not None or args.object is not None:
             parser.error("--all cannot be combined with --source, --output, or --object")
-        if args.scene == "perloco-grail":
+        if args.scene in ("perloco-grail", "perloco-grail-stairs"):
             if args.motion_set is not None:
                 parser.error("--motion-set is only valid with --scene uolm")
-            _run_grail_batch(device=args.device, overwrite=args.overwrite)
+            _run_grail_batch(device=args.device, overwrite=args.overwrite,
+                             source="grail_stairs" if args.scene == "perloco-grail-stairs" else "grail")
         else:
             motion_sets = (
                 (args.motion_set,)
@@ -1024,9 +1039,9 @@ def main() -> None:
         return
     if args.overwrite:
         parser.error("--overwrite requires --all")
-    if args.scene == "perloco-grail" and args.source is None:
+    if args.scene in ("perloco-grail", "perloco-grail-stairs") and args.source is None:
         parser.error("--scene perloco-grail requires --source or --all")
-    if args.scene == "perloco-grail" and args.motion_set is not None:
+    if args.scene in ("perloco-grail", "perloco-grail-stairs") and args.motion_set is not None:
         parser.error("--motion-set is only valid with --scene uolm")
 
     if args.scene == "uolm" and args.motion_set is not None and args.source is not None:

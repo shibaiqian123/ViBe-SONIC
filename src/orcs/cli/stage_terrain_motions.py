@@ -138,6 +138,12 @@ def _write_tile(out_root: Path, tile: TileSpec) -> None:
         "boxes": [{"pos": list(b.pos), "quat": list(b.quat), "half": list(b.half)}
                   for b in tile.boxes],
     }
+    if tile.meshes:
+        payload["meshes"] = [{"vertices": m.vertices.tolist(), "faces": m.faces.tolist()}
+                             for m in tile.meshes]
+        payload["schema_version"] = 2
+    if tile.size is not None:
+        payload["size"] = list(tile.size)
     if tile.hfield is not None:
         np.save(d / "hfield.npy", tile.hfield.heights.astype(np.float32))
         payload["hfield"] = {"file": "hfield.npy",
@@ -177,6 +183,8 @@ def _write_clip(sample_dir: Path, clip: ClipSpec, state: dict, vel: dict,
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--source", default="omni", choices=sorted(SOURCES))
+    ap.add_argument("--selection", type=Path, help="pinned GRAIL stair selection JSON")
+    ap.add_argument("--categories", help="GRAIL categories, including stair1/stair2 aliases")
     ap.add_argument("--root", type=Path, default=None,
                     help="dataset root (default: per-source under ORCS_DATA_ROOT)")
     ap.add_argument("--out", type=Path,
@@ -190,18 +198,37 @@ def main() -> None:
     ap.add_argument("--smpl", action="store_true",
                     help="also stage the SMPL-X human reference (grail only)")
     args = ap.parse_args()
+    if args.categories:
+        from orcs.cli.grail_stairs import categories
+        if args.source not in ("grail", "grail_stairs"):
+            ap.error("--categories applies only to GRAIL")
+        if args.categories != "curb":
+            categories(args.categories)
+            args.source = "grail_stairs"
+    if args.source == "grail_stairs" and args.selection is None:
+        ap.error("grail_stairs requires --selection from the download step")
 
     root = args.root or DATA_ROOT / SOURCES[args.source].default_root
+    if args.source == "grail_stairs":
+        stage_root = args.out / "grail_stairs"
+        stage_root.mkdir(parents=True, exist_ok=True)
+        (stage_root / "stage_report.json").write_text(json.dumps({"status": "staging"}) + "\n")
     src = SOURCES[args.source](
         root,
         families=tuple(args.families) if args.families else None,
         levels=tuple(args.levels) if args.levels else None,
         **({"smpl": True} if args.smpl else {}),
+        **({"selection": args.selection} if args.source == "grail_stairs" else {}),
     )
     out_root = args.out / src.name
     device = args.device if torch.cuda.is_available() else "cpu"
     if device != args.device:
         print("[stage] CUDA unavailable, falling back to CPU")
+
+    if args.source == "grail_stairs":
+        from orcs.cli.stage_stairs import stage_stairs
+        stage_stairs(src, out_root, args.fps, args.batch, device)
+        return
 
     tiles = list(src.tiles())
     for tile in tiles:
