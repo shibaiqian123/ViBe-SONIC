@@ -152,3 +152,10 @@ use this repository in your research, please consider citing:
   url={https://arxiv.org/abs/2609.09918},
 }
 ```
+
+## SONIC checkpoint selection
+
+Locate official release/v1.1/low-latency weights from existing server files or
+Hugging Face cache with `orcs-sonic-checkpoint`. Original-release conversion is
+optional; v1.1/low-latency runtime adaptation is not included.
+See [usage](docs/sonic_checkpoints.md) / [中文说明](docs/sonic_checkpoints_cn.md).

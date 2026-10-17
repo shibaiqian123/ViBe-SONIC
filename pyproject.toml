@@ -16,6 +16,7 @@ dependencies = [
     "mujoco==3.8.1",
     "mujoco-warp==3.8.1",
     "warp-lang==1.13.0",
+    "huggingface-hub>=0.24,<2",  # official SONIC checkpoint/cache resolution
     "joblib",           # reads SONIC smpl .pkl clips (orcs.tasks.uolm.smpl_data)
     # Capped, not just floored: rsl_rl's WandbLogWriter passes the legacy
     # `Settings(start_method=...)`, which 0.29 turned from a deprecation warning
@@ -65,6 +66,7 @@ orcs = "orcs.registration"
 # The data pipeline ships INSIDE the package (`orcs.cli`), so a pip-installed
 # orcs can produce the data it consumes. `scripts/*.py` are thin wrappers.
 [project.scripts]
+orcs-sonic-checkpoint = "orcs.cli.sonic_checkpoint:main"
 orcs-stage-terrain = "orcs.cli.stage_terrain_motions:main"
 orcs-view-terrain = "orcs.cli.view_terrain_motions:main"
 orcs-build-smpl = "orcs.cli.build_smpl_dataset:main"
