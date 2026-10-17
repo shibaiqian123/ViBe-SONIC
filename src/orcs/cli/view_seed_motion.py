@@ -34,7 +34,7 @@ def _smpl_segments(joints: np.ndarray) -> np.ndarray:
     )
 
 
-def _force_arrows(seed: SeedMotion, frame: int, scale: float) -> tuple[np.ndarray, np.ndarray]:
+def _force_arrows(seed: SeedMotion, frame: int, scale: float, *, origin: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     starts = seed.body_pos_w[frame]
     forces = seed.assist_force_w[frame]
     points = np.stack((starts, starts + scale * forces), axis=1).astype(np.float32)
@@ -47,7 +47,8 @@ def _force_arrows(seed: SeedMotion, frame: int, scale: float) -> tuple[np.ndarra
             axis=0,
         ).astype(np.float32)
         colors = np.concatenate((colors, np.array([[210, 80, 255]], dtype=np.uint8)))
-    return points, colors
+    # Stored positions are env-local; forces are vectors and are not translated.
+    return points + origin, colors
 
 
 def _force_display_scale(seed: SeedMotion) -> float:
@@ -81,15 +82,15 @@ def _load_obj_mesh(path: Path) -> tuple[np.ndarray, np.ndarray]:
     return np.asarray(vertices, dtype=np.float32), np.asarray(faces, dtype=np.int32)
 
 
-def _set_qpos(data, robot, seed: SeedMotion, frame: int, object_entity=None) -> None:
+def _set_qpos(data, robot, seed: SeedMotion, frame: int, object_entity=None, *, origin: np.ndarray) -> None:
     free = robot.indexing.free_joint_q_adr.cpu().numpy()
     joints = robot.indexing.joint_q_adr.cpu().numpy()
-    data.qpos[free[0:3]] = seed.robot_root_pos_w[frame]
+    data.qpos[free[0:3]] = seed.robot_root_pos_w[frame] + origin
     data.qpos[free[3:7]] = seed.robot_root_quat_w[frame]
     data.qpos[joints] = seed.joint_pos[frame]
     if object_entity is not None and seed.object_pos_w is not None:
         obj_free = object_entity.indexing.free_joint_q_adr.cpu().numpy()
-        data.qpos[obj_free[0:3]] = seed.object_pos_w[frame]
+        data.qpos[obj_free[0:3]] = seed.object_pos_w[frame] + origin
         data.qpos[obj_free[3:7]] = seed.object_quat_w[frame]
 
 
@@ -215,7 +216,7 @@ def main() -> None:
             colors=(45, 220, 235),
             line_width=4.0,
         )
-        arrow_points, arrow_colors = _force_arrows(seed, 0, _force_display_scale(seed))
+        arrow_points, arrow_colors = _force_arrows(seed, 0, _force_display_scale(seed), origin=origin)
         force_arrows = server.scene.add_arrows(
             "/assistance/forces",
             arrow_points,
@@ -230,7 +231,7 @@ def main() -> None:
                 "/assistance/object_target",
                 radius=0.06,
                 color=(210, 80, 255),
-                position=seed.object_target_pos_w[0],
+                position=seed.object_target_pos_w[0] + origin,
             )
         source_object = None
         if motion_set is not None and source_object_pos is not None:
@@ -283,7 +284,7 @@ def main() -> None:
         display_scale = _force_display_scale(seed)
 
         def render(frame: int) -> None:
-            _set_qpos(data, robot, seed, frame, object_entity)
+            _set_qpos(data, robot, seed, frame, object_entity, origin=origin)
             mujoco.mj_forward(model, data)
             mj_scene.update_from_mjdata(data)
 
@@ -293,12 +294,12 @@ def main() -> None:
             smpl_points.visible = gui_smpl.value
             smpl_bones.visible = gui_smpl.value
 
-            points, colors = _force_arrows(seed, frame, display_scale)
+            points, colors = _force_arrows(seed, frame, display_scale, origin=origin)
             force_arrows.points = points
             force_arrows.colors = colors
             force_arrows.visible = gui_forces.value
             if object_target is not None and seed.object_target_pos_w is not None:
-                object_target.position = seed.object_target_pos_w[frame]
+                object_target.position = seed.object_target_pos_w[frame] + origin
                 object_target.visible = gui_target.value
             if (
                 source_object is not None
