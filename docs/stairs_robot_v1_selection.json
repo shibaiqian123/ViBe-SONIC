@@ -1,0 +1,121 @@
+{
+  "schema": 1,
+  "repository": "https://huggingface.co/datasets/nvidia/PhysicalAI-Robotics-Locomanipulation-GRAIL",
+  "revision": "40e795761302e611c1e7e3a6caefdd010d56c199",
+  "request": "b0b9cbf5f6beefa40abf2289689c5481d2facf38a7968cf15129d8a0a6df1b15",
+  "samples": [
+    {
+      "category": "stair_p1",
+      "stem": "terrain_stairs__aged_terracotta_tile_straight_single_flight_staircase_with_12_warm_orange_steps_in_one_straight_run_no_handrails_no_curves_no_turns__0000",
+      "family": "aged_terracotta_tile_straight_single_flight_staircase_with_12_warm_orange_steps_in_one_straight_run_no_handrails_no_curves_no_turns",
+      "files": {
+        "robot": "data/stair_p1/robot/terrain_stairs__aged_terracotta_tile_straight_single_flight_staircase_with_12_warm_orange_steps_in_one_straight_run_no_handrails_no_curves_no_turns__0000.pkl",
+        "recon": "data/stair_p1/recon/terrain_stairs__aged_terracotta_tile_straight_single_flight_staircase_with_12_warm_orange_steps_in_one_straight_run_no_handrails_no_curves_no_turns__0000.pkl",
+        "objects": "data/stair_p1/objects/terrain_stairs__aged_terracotta_tile_straight_single_flight_staircase_with_12_warm_orange_steps_in_one_straight_run_no_handrails_no_curves_no_turns__0000.pkl",
+        "meta": "data/stair_p1/meta/terrain_stairs__aged_terracotta_tile_straight_single_flight_staircase_with_12_warm_orange_steps_in_one_straight_run_no_handrails_no_curves_no_turns__0000.pkl",
+        "object_usd": "data/stair_p1/object_usd/terrain_stairs__aged_terracotta_tile_straight_single_flight_staircase_with_12_warm_orange_steps_in_one_straight_run_no_handrails_no_curves_no_turns__0000.usd"
+      },
+      "tile_id": "stair_p1_02afcc5711d8c546",
+      "sample_id": "sample0"
+    },
+    {
+      "category": "stair_p1",
+      "stem": "terrain_stairs__aged_terracotta_tile_straight_single_flight_staircase_with_12_warm_orange_steps_in_one_straight_run_no_handrails_no_curves_no_turns__0001",
+      "family": "aged_terracotta_tile_straight_single_flight_staircase_with_12_warm_orange_steps_in_one_straight_run_no_handrails_no_curves_no_turns",
+      "files": {
+        "robot": "data/stair_p1/robot/terrain_stairs__aged_terracotta_tile_straight_single_flight_staircase_with_12_warm_orange_steps_in_one_straight_run_no_handrails_no_curves_no_turns__0001.pkl",
+        "recon": "data/stair_p1/recon/terrain_stairs__aged_terracotta_tile_straight_single_flight_staircase_with_12_warm_orange_steps_in_one_straight_run_no_handrails_no_curves_no_turns__0001.pkl",
+        "objects": "data/stair_p1/objects/terrain_stairs__aged_terracotta_tile_straight_single_flight_staircase_with_12_warm_orange_steps_in_one_straight_run_no_handrails_no_curves_no_turns__0001.pkl",
+        "meta": "data/stair_p1/meta/terrain_stairs__aged_terracotta_tile_straight_single_flight_staircase_with_12_warm_orange_steps_in_one_straight_run_no_handrails_no_curves_no_turns__0001.pkl",
+        "object_usd": "data/stair_p1/object_usd/terrain_stairs__aged_terracotta_tile_straight_single_flight_staircase_with_12_warm_orange_steps_in_one_straight_run_no_handrails_no_curves_no_turns__0001.usd"
+      },
+      "tile_id": "stair_p1_96ceca214c8d1b6a",
+      "sample_id": "sample0"
+    },
+    {
+      "category": "stair_p1",
+      "stem": "terrain_stairs__antique_worn_stone_straight_single_flight_staircase_with_14_rectangular_steps_in_one_straight_run_no_handrails_no_curves_no_turns__0000",
+      "family": "antique_worn_stone_straight_single_flight_staircase_with_14_rectangular_steps_in_one_straight_run_no_handrails_no_curves_no_turns",
+      "files": {
+        "robot": "data/stair_p1/robot/terrain_stairs__antique_worn_stone_straight_single_flight_staircase_with_14_rectangular_steps_in_one_straight_run_no_handrails_no_curves_no_turns__0000.pkl",
+        "recon": "data/stair_p1/recon/terrain_stairs__antique_worn_stone_straight_single_flight_staircase_with_14_rectangular_steps_in_one_straight_run_no_handrails_no_curves_no_turns__0000.pkl",
+        "objects": "data/stair_p1/objects/terrain_stairs__antique_worn_stone_straight_single_flight_staircase_with_14_rectangular_steps_in_one_straight_run_no_handrails_no_curves_no_turns__0000.pkl",
+        "meta": "data/stair_p1/meta/terrain_stairs__antique_worn_stone_straight_single_flight_staircase_with_14_rectangular_steps_in_one_straight_run_no_handrails_no_curves_no_turns__0000.pkl",
+        "object_usd": "data/stair_p1/object_usd/terrain_stairs__antique_worn_stone_straight_single_flight_staircase_with_14_rectangular_steps_in_one_straight_run_no_handrails_no_curves_no_turns__0000.usd"
+      },
+      "tile_id": "stair_p1_4f5c901b5adcb903",
+      "sample_id": "sample0"
+    },
+    {
+      "category": "stair_p1",
+      "stem": "terrain_stairs__antique_worn_stone_straight_single_flight_staircase_with_14_rectangular_steps_in_one_straight_run_no_handrails_no_curves_no_turns__0001",
+      "family": "antique_worn_stone_straight_single_flight_staircase_with_14_rectangular_steps_in_one_straight_run_no_handrails_no_curves_no_turns",
+      "files": {
+        "robot": "data/stair_p1/robot/terrain_stairs__antique_worn_stone_straight_single_flight_staircase_with_14_rectangular_steps_in_one_straight_run_no_handrails_no_curves_no_turns__0001.pkl",
+        "recon": "data/stair_p1/recon/terrain_stairs__antique_worn_stone_straight_single_flight_staircase_with_14_rectangular_steps_in_one_straight_run_no_handrails_no_curves_no_turns__0001.pkl",
+        "objects": "data/stair_p1/objects/terrain_stairs__antique_worn_stone_straight_single_flight_staircase_with_14_rectangular_steps_in_one_straight_run_no_handrails_no_curves_no_turns__0001.pkl",
+        "meta": "data/stair_p1/meta/terrain_stairs__antique_worn_stone_straight_single_flight_staircase_with_14_rectangular_steps_in_one_straight_run_no_handrails_no_curves_no_turns__0001.pkl",
+        "object_usd": "data/stair_p1/object_usd/terrain_stairs__antique_worn_stone_straight_single_flight_staircase_with_14_rectangular_steps_in_one_straight_run_no_handrails_no_curves_no_turns__0001.usd"
+      },
+      "tile_id": "stair_p1_daa291a807fb834a",
+      "sample_id": "sample0"
+    },
+    {
+      "category": "stair_p2",
+      "stem": "terrain_stairs__stairs_2064__0001",
+      "family": "stairs_2064",
+      "files": {
+        "robot": "data/stair_p2/robot/terrain_stairs__stairs_2064__0001.pkl",
+        "recon": "data/stair_p2/recon/terrain_stairs__stairs_2064__0001.pkl",
+        "objects": "data/stair_p2/objects/terrain_stairs__stairs_2064__0001.pkl",
+        "meta": "data/stair_p2/meta/terrain_stairs__stairs_2064__0001.pkl",
+        "object_usd": "data/stair_p2/object_usd/terrain_stairs__stairs_2064__0001.usd"
+      },
+      "tile_id": "stair_p2_2583aaa3a5ca8eed",
+      "sample_id": "sample0"
+    },
+    {
+      "category": "stair_p2",
+      "stem": "terrain_stairs__stairs_2064__0002",
+      "family": "stairs_2064",
+      "files": {
+        "robot": "data/stair_p2/robot/terrain_stairs__stairs_2064__0002.pkl",
+        "recon": "data/stair_p2/recon/terrain_stairs__stairs_2064__0002.pkl",
+        "objects": "data/stair_p2/objects/terrain_stairs__stairs_2064__0002.pkl",
+        "meta": "data/stair_p2/meta/terrain_stairs__stairs_2064__0002.pkl",
+        "object_usd": "data/stair_p2/object_usd/terrain_stairs__stairs_2064__0002.usd"
+      },
+      "tile_id": "stair_p2_3cf8005eeb361db1",
+      "sample_id": "sample0"
+    },
+    {
+      "category": "stair_p2",
+      "stem": "terrain_stairs__stairs_2065__0000",
+      "family": "stairs_2065",
+      "files": {
+        "robot": "data/stair_p2/robot/terrain_stairs__stairs_2065__0000.pkl",
+        "recon": "data/stair_p2/recon/terrain_stairs__stairs_2065__0000.pkl",
+        "objects": "data/stair_p2/objects/terrain_stairs__stairs_2065__0000.pkl",
+        "meta": "data/stair_p2/meta/terrain_stairs__stairs_2065__0000.pkl",
+        "object_usd": "data/stair_p2/object_usd/terrain_stairs__stairs_2065__0000.usd"
+      },
+      "tile_id": "stair_p2_e53716842a1e1f27",
+      "sample_id": "sample0"
+    },
+    {
+      "category": "stair_p2",
+      "stem": "terrain_stairs__stairs_2065__0001",
+      "family": "stairs_2065",
+      "files": {
+        "robot": "data/stair_p2/robot/terrain_stairs__stairs_2065__0001.pkl",
+        "recon": "data/stair_p2/recon/terrain_stairs__stairs_2065__0001.pkl",
+        "objects": "data/stair_p2/objects/terrain_stairs__stairs_2065__0001.pkl",
+        "meta": "data/stair_p2/meta/terrain_stairs__stairs_2065__0001.pkl",
+        "object_usd": "data/stair_p2/object_usd/terrain_stairs__stairs_2065__0001.usd"
+      },
+      "tile_id": "stair_p2_6768415cac75882b",
+      "sample_id": "sample0"
+    }
+  ],
+  "dependencies": []
+}
