@@ -152,6 +152,7 @@ def _resolve_grail_smpl_seeds(roster_path: str | None, source: str = "grail", so
         identity = model_meta["contract_id"]
     ready_by_key: dict[str, tuple[str, ...]] = {}
     lengths: dict[tuple[str, str], int] = {}
+    alignment_errors = []
 
     for key in requested.tile_keys:
         keep = requested.clips.get(key)
@@ -160,6 +161,13 @@ def _resolve_grail_smpl_seeds(roster_path: str | None, source: str = "grail", so
             sample = motion_file.parent
             if keep and sample.name not in keep:
                 continue
+            if source == "grail_stairs":
+                from orcs.core.data.grail_alignment import require_stair_alignment
+                try:
+                    require_stair_alignment(sample)
+                except (ValueError, OSError) as exc:
+                    alignment_errors.append(str(exc))
+                    continue
             seed_file = sample / "seed_state.npz"
             if sonic_version is not None:
                 from orcs.core.sonic.specs import seed_path
@@ -194,6 +202,8 @@ def _resolve_grail_smpl_seeds(roster_path: str | None, source: str = "grail", so
                for level in requested.levels)
     )
     if not families:
+        if alignment_errors:
+            raise FileNotFoundError(alignment_errors[0])
         raise FileNotFoundError(
             f"no complete GRAIL SMPL seed clips under {root}; run "
             f"orcs-pseudo-retarget --scene {'perloco-grail-stairs' if source == 'grail_stairs' else 'perloco-grail'} --all"

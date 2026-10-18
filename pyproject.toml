@@ -66,6 +66,7 @@ orcs = "orcs.registration"
 # The data pipeline ships INSIDE the package (`orcs.cli`), so a pip-installed
 # orcs can produce the data it consumes. `scripts/*.py` are thin wrappers.
 [project.scripts]
+orcs-audit-grail = "orcs.cli.audit_grail:main"
 orcs-sonic-checkpoint = "orcs.cli.sonic_checkpoint:main"
 orcs-stage-terrain = "orcs.cli.stage_terrain_motions:main"
 orcs-view-terrain = "orcs.cli.view_terrain_motions:main"

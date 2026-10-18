@@ -23,7 +23,7 @@ from orcs.tasks.perloco.terrain_spec import (
     box_from_vertices,
 )
 
-STAGE_VERSION = 1
+STAGE_VERSION = 2
 
 
 def fingerprint(paths: list[Path]) -> str:
@@ -114,7 +114,7 @@ class GrailStairsSource:
             smpl = SmplSpec(*smpl_channels(files["recon"], smplx_dir()))
             if len(smpl.joints) < 3 or not all(np.isfinite(x).all() for x in (smpl.joints, smpl.root_quat, smpl.joints_viz)):
                 raise ValueError("invalid SMPL channels")
-            # Phase alignment is the existing GRAIL retiming contract; record diagnostics.
+            # Endpoint phase is a diagnostic approximation, not verified correspondence.
             endpoint_error = np.linalg.norm(smpl.joints_viz[[0, -1], 0] - pos[[0, -1]], axis=1)
             if np.any(endpoint_error > 1.0):
                 raise ValueError(f"SMPL/robot endpoint mismatch >1m: {endpoint_error}; inspect source alignment")
@@ -124,7 +124,9 @@ class GrailStairsSource:
         meta = {"source": f"grail/{row['category']}", "take": row["stem"],
                 "revision": self.selection["revision"], "stage_version": STAGE_VERSION,
                 "input_sha256": digest, "coordinates": "z-up metres, tile-local, wxyz",
-                "alignment": "shared endpoint-normalized phase (GRAIL retiming)",
+                "alignment": "unverified endpoint-normalized phase; diagnostic only",
+                "smpl_alignment_verified": False,
+                "smpl_alignment_reason": "released robot rollout has no verified recon-frame mapping",
                 "robot_frames": len(pos), "src_fps": fps,
                 "smpl_frames": len(smpl.joints) if smpl else None,
                 "tile_size": tile_size}
