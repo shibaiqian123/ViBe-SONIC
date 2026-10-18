@@ -5,7 +5,8 @@ import torch
 from rsl_rl.models import SonicWithAdapterModel
 
 
-class VersionedSonicWithAdapterModel(SonicWithAdapterModel):
+class SonicContractMixin:
+    """Shared observation and base-weight guard for privileged and visual actors."""
     def __init__(self, obs, obs_groups, obs_set, output_dim, *, sonic_contract_id: str,
                  tokenizer_width: int, allow_legacy_resume: bool = False, **kwargs):
         if obs['tokenizer'].shape[-1] != tokenizer_width or obs['policy'].shape[-1] != 930:
@@ -33,3 +34,7 @@ class VersionedSonicWithAdapterModel(SonicWithAdapterModel):
             if incoming is None or not torch.equal(incoming.cpu(), self._orcs_sonic_contract.cpu()):
                 raise ValueError('refusing checkpoint resume: SONIC version/mode/base weights differ')
         return super().load_state_dict(state_dict, strict=strict, **kwargs)
+
+
+class VersionedSonicWithAdapterModel(SonicContractMixin, SonicWithAdapterModel):
+    pass
