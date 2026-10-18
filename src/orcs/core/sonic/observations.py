@@ -84,3 +84,12 @@ def observation_groups(version: str, mode: str, command_name="motion"):
         terms={f"{mode}_tokenizer": ObservationTermCfg(func=tokenizer, params={
             "command_name": command_name, "version": version, "mode": mode})},
         concatenate_terms=True, enable_corruption=False)}
+
+
+def zero_wrist_smpl_tokenizer(env, command_name="motion", **kwargs):
+    """Original release tokenizer, with an explicit unavailable-wrist convention."""
+    from mocke.sonic.mdp.observations import sonic_smpl_tokenizer
+    value = sonic_smpl_tokenizer(env, command_name=command_name, **kwargs)
+    frames = value.reshape(env.num_envs, -1, 84).clone()
+    frames[..., 78:84] = 0
+    return frames.flatten(1)

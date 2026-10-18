@@ -55,7 +55,7 @@ def stage_stairs(src, out_root: Path, fps: float, batch: int, device: str) -> No
             src._load(row)
             tile, clip = src._tiles[row["tile_id"]], src._clips[row["tile_id"]]
             config = {"converter_sha256": converter, "fps": fps, "smpl": src.smpl,
-                      "input_sha256": clip.meta["input_sha256"]}
+                      "input_sha256": clip.meta["input_sha256"], "human_timeline": src.human_timeline}
             token = hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()
             old = target / "sample0" / "metadata.json"
             try:
@@ -86,6 +86,9 @@ def stage_stairs(src, out_root: Path, fps: float, batch: int, device: str) -> No
             human = _resample_smpl(clip.smpl, phase, device) if clip.smpl else None
             if not all(torch.isfinite(x).all() for x in (*state.values(), *vel.values())):
                 raise ValueError("nonfinite resampled motion")
+            if src.human_timeline:
+                clip.meta.update(output_fps=fps, output_frames=len(phase),
+                                 source_time_end=(len(clip.smpl.joints)-1)/clip.fps)
             clip.meta.update(stage_fingerprint=token, converter_sha256=converter, generator_sha=commit)
             with tempfile.TemporaryDirectory(prefix=".stair-stage-", dir=out_root) as tmp:
                 temporary_root = Path(tmp)

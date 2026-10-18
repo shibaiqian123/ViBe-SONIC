@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
+import numpy as np
 import torch
 from mjlab.utils.lab_api.math import (
     axis_angle_from_quat,
@@ -74,6 +75,9 @@ class _TileMotionLoader(ConcatMotionLoader):
             strict=True,
         ):
             dst.append(src)
+        from orcs.core.data.human_timeline import is_human_clock, validate
+        if is_human_clock(sample_dir):
+            validate(sample_dir)
         contact_path = sample_dir / "stair_contact_targets.npz"
         if contact_path.exists():
             with np.load(contact_path) as contact:

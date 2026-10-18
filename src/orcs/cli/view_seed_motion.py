@@ -285,6 +285,12 @@ def main() -> None:
             gui_source_object = server.gui.add_checkbox(
                 "original object", initial_value=True
             )
+        server.gui.add_markdown(
+            f"**Source:** `{sample.name}` · **Frames:** {seed.num_frames}  \n"
+            f"**Point mapping:** `{getattr(cfg.commands['motion'], 'point_mapping', 'legacy')}`  \n"
+            "Cyan: source human joints/bones. Green: mapped ankle-link targets "
+            "(not sole contacts). Magenta: robot sole measurement points."
+        )
         gui_info = server.gui.add_markdown("")
 
         display_scale = _force_display_scale(seed)
@@ -294,10 +300,9 @@ def main() -> None:
 
             from orcs.core.data.foot_quality import FootDiagnostics
             from orcs.core.data.point_reference import scaled_smpl_targets
-            from orcs.core.data.seed_identity import STAIR_POINT_MAPPING
             foot_diagnostics = FootDiagnostics(model)
             mapped = scaled_smpl_targets(torch.as_tensor(smpl), seed.morphology_scale,
-                                         torch.as_tensor(origin), mapping=STAIR_POINT_MAPPING).numpy()
+                                         torch.as_tensor(origin), mapping=cfg.commands["motion"].point_mapping).numpy()
             ankle_targets = server.scene.add_point_cloud(
                 "/quality/ankle_targets", mapped[0, [3, 6]], colors=(80, 255, 80), point_size=.045)
             sole_markers = server.scene.add_point_cloud(

@@ -107,6 +107,9 @@ class SeededSmplMotionLoader(ConcatMotionLoader):
                 seed.support_transition_weight,
             )
             has_support = all(value is not None for value in support_values)
+            from orcs.core.data.human_timeline import is_human_clock
+            if (sample / "metadata.json").exists() and is_human_clock(sample) and any(v is not None for v in support_values):
+                raise ValueError("human-clock baseline forbids seed support compensation")
             if any(value is not None for value in support_values) and not has_support:
                 raise ValueError(f"{seed_path}: partial stairs-contact-v2 channels")
             support_presence.append(has_support)

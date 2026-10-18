@@ -70,3 +70,11 @@ def test_robot_only_force_overlay():
     assert points.shape == (2, 2, 3)
     assert colors.shape == (2, 3)
     np.testing.assert_allclose(points[:, 0], s.body_pos_w[0] + origin)
+
+
+def test_display_mapping_comes_from_active_command():
+    calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
+             and isinstance(n.func, ast.Name) and n.func.id == "scaled_smpl_targets"]
+    assert len(calls) == 1
+    mapping = next(k.value for k in calls[0].keywords if k.arg == "mapping")
+    assert ast.unparse(mapping) == "cfg.commands['motion'].point_mapping"

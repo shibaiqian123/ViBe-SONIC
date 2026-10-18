@@ -197,7 +197,10 @@ def main() -> None:
     ap.add_argument("--device", default="cuda:0")
     ap.add_argument("--smpl", action="store_true",
                     help="also stage the SMPL-X human reference (grail only)")
+    ap.add_argument("--human-timeline", action="store_true", help="stairs SMPL: use recon clock, zero robot/wrist references")
     args = ap.parse_args()
+    if args.human_timeline and (args.source != "grail_stairs" or not args.smpl or args.fps != 50):
+        ap.error("--human-timeline requires --source grail_stairs --smpl --fps 50")
     if args.categories:
         from orcs.cli.grail_stairs import categories
         if args.source not in ("grail", "grail_stairs"):
@@ -218,7 +221,7 @@ def main() -> None:
         families=tuple(args.families) if args.families else None,
         levels=tuple(args.levels) if args.levels else None,
         **({"smpl": True} if args.smpl else {}),
-        **({"selection": args.selection} if args.source == "grail_stairs" else {}),
+        **({"selection": args.selection, "human_timeline": args.human_timeline} if args.source == "grail_stairs" else {}),
     )
     out_root = args.out / src.name
     device = args.device if torch.cuda.is_available() else "cpu"

@@ -52,7 +52,7 @@ def audit_source_contacts(sample: Path, raw_root: Path) -> dict:
         "source_frames": len(source.get('poses', [])),
         "staged_frames": staged_frames,
         "staged_fps": staged_fps,
-        "time_mapping": "endpoint-normalized phase, not verified timestamp synchronization",
+        "time_mapping": meta.get("alignment", "unverified"),
     }
 
 
@@ -161,7 +161,7 @@ def main():
                 seed_receipt=json.loads(receipt.read_text())
                 if receipt.exists()
                 else None,
-                evaluation_identity=stair_seed_identity(),
+                evaluation_identity=stair_seed_identity(sample),
                 source_contacts=audit_source_contacts(sample, args.raw_root),
             )
             save_report(args.out_dir / key, arrays, summary)

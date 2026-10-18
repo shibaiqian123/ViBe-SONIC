@@ -48,11 +48,14 @@ class GrailStairsSource:
     name = "grail_stairs"
     default_root = "GRAIL-stairs"
 
-    def __init__(self, root, *, selection, families=None, levels=None, smpl=False, **kwargs):
+    def __init__(self, root, *, selection, families=None, levels=None, smpl=False, human_timeline=False, **kwargs):
         del levels, kwargs
         self.root = Path(root)
         self.selection = json.loads(Path(selection).read_text())
         self.smpl = smpl
+        self.human_timeline = human_timeline
+        if human_timeline and not smpl:
+            raise ValueError("human timeline requires --smpl")
         self.samples = [x for x in self.selection["samples"] if families is None or x["tile_id"] in families]
         if not self.samples:
             raise ValueError("empty stair selection")
@@ -116,7 +119,7 @@ class GrailStairsSource:
                 raise ValueError("invalid SMPL channels")
             # Endpoint phase is a diagnostic approximation, not verified correspondence.
             endpoint_error = np.linalg.norm(smpl.joints_viz[[0, -1], 0] - pos[[0, -1]], axis=1)
-            if np.any(endpoint_error > 1.0):
+            if not self.human_timeline and np.any(endpoint_error > 1.0):
                 raise ValueError(f"SMPL/robot endpoint mismatch >1m: {endpoint_error}; inspect source alignment")
         source_paths = [p for k, p in files.items() if k != "recon" or self.smpl]
         source_paths += [self.root / p for p in self.selection.get("dependencies", [])]
@@ -130,6 +133,21 @@ class GrailStairsSource:
                 "robot_frames": len(pos), "src_fps": fps,
                 "smpl_frames": len(smpl.joints) if smpl else None,
                 "tile_size": tile_size}
+        if self.human_timeline:
+            from orcs.core.data.human_timeline import CONTRACT, source_fps
+            recon = joblib.load(files["recon"])
+            fps = source_fps(recon)
+            meta.update(timeline_contract=CONTRACT, source_human_fps=fps,
+                        source_human_frames=len(smpl.joints), point_mapping="legacy",
+                        wrist_reference="zero", alignment="human source clock; generated seed only",
+                        recon_sha256=hashlib.sha256(files["recon"].read_bytes()).hexdigest())
+            pos = smpl.joints_viz[:, 0].copy()
+            quat = smpl.root_quat.copy()
+            joints = np.zeros((len(pos), len(names)))
+            # Include the human path when sizing the scene; do not shift either source.
+            extent = np.maximum(extent, np.max(np.abs(pos[:, :2]), axis=0))
+            tile_size = tuple(np.maximum(6.0, 2 * (extent + 1.0)))
+            meta["tile_size"] = tile_size
         tile = TileSpec(family=row["tile_id"], level=0.0, boxes=tuple(boxes), meshes=tuple(hulls), size=tile_size)
         clip = ClipSpec(name=row["stem"], root_pos=pos, root_quat=quat, joint_pos=joints,
                         joint_names=names, fps=fps, family=row["tile_id"], level=0.0, smpl=smpl, meta=meta)

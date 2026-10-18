@@ -553,7 +553,11 @@ def grail_stairs_env_cfg(*, play: bool = False, roster: str | None = None,
     from orcs.core.sonic.runtime import configure_env
     cfg = grail_env_cfg(play=play, roster=roster, command_space=command_space,
                          _source="grail_stairs", tile_size=staged_tile_size(root))
-    return configure_env(cfg, sonic_version, "smpl" if command_space == "smpl" else "g1")
+    cfg = configure_env(cfg, sonic_version, "smpl" if command_space == "smpl" else "g1")
+    if command_space == "smpl":
+        from orcs.tasks.perloco.human_clock import configure
+        cfg = configure(cfg, root, sonic_version)
+    return cfg
 
 
 def grail_stairs_smpl_env_cfg(*, play: bool = False, roster: str | None = None, sonic_version: str = "release") -> ManagerBasedRlEnvCfg:
@@ -567,4 +571,6 @@ def grail_stairs_smpl_env_cfg(*, play: bool = False, roster: str | None = None, 
     from orcs.core.sonic.runtime import configure_env
     cfg = grail_smpl_env_cfg(play=play, roster=roster, _source="grail_stairs",
                               _sonic_version=sonic_version, tile_size=staged_tile_size(root))
-    return configure_env(cfg, sonic_version, "smpl")
+    cfg = configure_env(cfg, sonic_version, "smpl")
+    from orcs.tasks.perloco.human_clock import configure
+    return configure(cfg, root, sonic_version)

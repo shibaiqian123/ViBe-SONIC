@@ -33,7 +33,7 @@ def write_seed_receipt(sample: Path, version: str | None = None, identity: str |
         if identity != model_meta['contract_id']:
             raise ValueError("seed generator used a different SONIC model contract")
         from orcs.core.data.seed_identity import stair_seed_identity
-        receipt.update(stair_seed_identity())
+        receipt.update(stair_seed_identity(sample))
         receipt.update(sonic_version=version, contract_id=identity,
                        base_sha256=model_meta['source_sha256'], observation_version=CONTRACT_VERSION)
         destination = seed_path(sample, version).with_name('seed_source.json')
@@ -53,7 +53,7 @@ def seed_matches_source(sample: Path, version: str | None = None, identity: str 
             return False
         if version is not None:
             from orcs.core.data.seed_identity import stair_seed_identity
-            expected = stair_seed_identity()
+            expected = stair_seed_identity(sample)
             if any(receipt.get(key) != value for key, value in expected.items()):
                 return False
         return receipt["source_sha256"] == source_digest(sample)

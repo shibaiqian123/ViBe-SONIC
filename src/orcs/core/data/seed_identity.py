@@ -11,12 +11,18 @@ STAIR_POINT_MAPPING = "stairs-contact-v2"
 STAIR_CONTACT_CONFIG = "distance<=3mm;normal<=30deg;transition=0.1s"
 
 
-def stair_seed_identity() -> dict:
+def stair_seed_identity(sample=None) -> dict:
+    mapping, contact = STAIR_POINT_MAPPING, STAIR_CONTACT_CONFIG
+    if sample is not None:
+        from orcs.core.data.human_timeline import is_human_clock, validate
+        if is_human_clock(sample):
+            validate(sample)
+            mapping, contact = "legacy", "disabled"
     path = os.environ.get("ORCS_G1_HAND_URDF")
     if not path:
         return {
-            "point_mapping": STAIR_POINT_MAPPING,
-            "contact_config": STAIR_CONTACT_CONFIG,
+            "point_mapping": mapping,
+            "contact_config": contact,
             "hand_config": "flat-hand-v1",
         }
     urdf = Path(path).expanduser().resolve(strict=True)
@@ -34,7 +40,7 @@ def stair_seed_identity() -> dict:
                 for chunk in iter(lambda: stream.read(1024 * 1024), b""):
                     h.update(chunk)
     return {
-        "point_mapping": STAIR_POINT_MAPPING,
-        "contact_config": STAIR_CONTACT_CONFIG,
+        "point_mapping": mapping,
+        "contact_config": contact,
         "hand_config": "dex1-fixed-zero:" + h.hexdigest(),
     }
