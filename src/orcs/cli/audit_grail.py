@@ -68,8 +68,9 @@ def timeline_report(robot, human):
 
 def compare_robot(robot, staged):
     import numpy as np
-    from orcs.tasks.perloco.sources.grail import _JOINT_NAMES
     from scipy.spatial.transform import Rotation, Slerp
+
+    from orcs.tasks.perloco.sources.grail import _JOINT_NAMES
 
     with np.load(staged / "motion.npz", allow_pickle=False) as data:
         times = np.arange(len(data["joint_pos"])) / float(data["fps"].reshape(-1)[0])
@@ -100,11 +101,12 @@ def compare_terrain(path, obj):
     rigid transforms cannot change relative geometry or Euclidean errors.
     """
     import numpy as np
+    from pxr import Gf, Usd, UsdGeom
+
     from orcs.tasks.perloco.sources.stair_geometry import (
         static_object_transform,
         usd_meshes,
     )
-    from pxr import Gf, Usd, UsdGeom
 
     stage = Usd.Stage.Open(str(path))
     if str(UsdGeom.GetStageUpAxis(stage)) != "Z" or UsdGeom.GetStageMetersPerUnit(stage) != 1.0:
@@ -152,7 +154,7 @@ def compare_terrain(path, obj):
             "scope": "official renderer root TRS replacement vs ORCS static USD vertices; collision decomposition not certified"}, first
 
 
-def official_forward(root, human, models):
+def official_forward(root, human, models, mesh_output=None):
     """Execute the pinned upstream FK function, not the ORCS reimplementation.
 
     Extracting its AST avoids importing the unrelated IK/viewer/Isaac stack.
@@ -171,14 +173,21 @@ def official_forward(root, human, models):
     data = {k: torch.as_tensor(np.asarray(human[k]), dtype=torch.float32)
             for k in ("poses", "betas", "trans", "left_hand_pose", "right_hand_pose")}
     model = smplx.create(str(models), model_type="smplx", num_betas=10, num_pca_comps=45)
-    standard = ns["forward_smplx"](model, data).joints.numpy()
+    standard_output = ns["forward_smplx"](model, data, return_mesh=mesh_output is not None)
+    standard = standard_output.joints.numpy()
     trans = np.asarray(human["trans"])[:, None]
     standard = (standard - trans) * np.asarray(human.get("scale", 1.0)) + trans
     spec = importlib.util.spec_from_file_location("grail_audit_g1", root / "grail/models/g1_smplx_model.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     g1 = module.G1ProportionSMPLX.from_g1_smplx_dir(str(models), str(root / "data/g1_smplx"))
-    proportioned = ns["forward_smplx"](g1.model, data).joints.numpy()
+    g1_output = ns["forward_smplx"](g1.model, data, return_mesh=mesh_output is not None)
+    proportioned = g1_output.joints.numpy()
+    if mesh_output is not None:
+        mesh_output["official_standard_vertices"] = ((standard_output.vertices.numpy() - trans)
+                                                     * np.asarray(human.get("scale", 1.0)) + trans).astype(np.float32)
+        mesh_output["official_g1_vertices"] = g1_output.vertices.numpy().astype(np.float32)
+        mesh_output["human_faces"] = np.asarray(model.faces, dtype=np.int32)
     return standard, proportioned
 
 
@@ -244,7 +253,7 @@ def audit(args):
         report["blockers"].append(f"terrain: {type(exc).__name__}: {exc}")
         report["checks"]["terrain"] = "unverified"
     try:
-        standard, g1 = official_forward(official, human, args.body_models)
+        standard, g1 = official_forward(official, human, args.body_models, arrays)
         from orcs.tasks.perloco.sources.smplx_fk import smpl_channels
         indices = list(range(22)) + [25, 40]
         orcs = smpl_channels(files["recon"], args.body_models)[2]
@@ -256,12 +265,51 @@ def audit(args):
         report["checks"]["human_scope"] = "Unpadded source frames; standard applies source scale, G1 branch does not. No terrain or height correction."
     except Exception as exc:
         report["blockers"].append(f"human FK: {type(exc).__name__}: {exc}")
+    write_foot_diagnostics(output, arrays, report)
     np.savez_compressed(output / "replay.npz", **arrays)
     report["checks"]["dynamic_contact"] = "not tested: geometric replay only"
     report["status"] = "blocked"
     (output / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report, indent=2))
     return 2
+
+
+def foot_diagnostics(joints, fps):
+    """Anatomical joint metrics, NOT sole contact or support-phase labels."""
+    import numpy as np
+    if fps <= 0 or len(joints) < 2:
+        raise ValueError("foot diagnostics require positive fps and at least two frames")
+    ankle = joints[:, [7, 8]]
+    foot = joints[:, [10, 11]]
+    delta = foot - ankle
+    angle = np.degrees(np.arctan2(delta[..., 2], np.linalg.norm(delta[..., :2], axis=-1)))
+    speed = np.linalg.norm(np.gradient(foot, 1 / fps, axis=0), axis=-1)
+    return ankle, foot, angle, speed
+
+
+def write_foot_diagnostics(output, arrays, report):
+    import csv
+
+    import numpy as np
+    fps = report["timeline"]["human_fps"]
+    summary = {"scope": "Joint-axis diagnostics only; ankle is not heel, foot joint is not toe/sole. "
+               "No verified support labels: cannot classify persistent tiptoe vs push-off.", "branches": {}}
+    for branch in ("official_standard", "official_g1"):
+        if branch not in arrays:
+            continue
+        ankle, foot, angle, speed = foot_diagnostics(arrays[branch], fps)
+        with (output / f"{branch}_feet.csv").open("w", newline="") as stream:
+            writer = csv.writer(stream)
+            writer.writerow(["frame", "time_s", "side", "ankle_z_m", "foot_joint_z_m",
+                             "ankle_to_foot_axis_deg", "foot_joint_speed_m_s"])
+            for frame in range(len(ankle)):
+                for side, label in enumerate(("left", "right")):
+                    writer.writerow([frame, frame / fps, label, ankle[frame, side, 2],
+                                     foot[frame, side, 2], angle[frame, side], speed[frame, side]])
+        summary["branches"][branch] = {
+            "frames": len(ankle), "axis_angle_range_deg": [float(np.min(angle)), float(np.max(angle))],
+            "support_phase": "unverified", "tiptoe_classification": "not established"}
+    (output / "foot_diagnostics.json").write_text(json.dumps(summary, indent=2) + "\n")
 
 
 def view(directory, port):
@@ -274,13 +322,15 @@ def view(directory, port):
     import viser
     from mjlab.entity import Entity
     from mjviser import ViserMujocoScene
+
     from orcs.assets import get_g1_flat_hand_cfg
     from orcs.tasks.perloco.sources.grail import _JOINT_NAMES
     from orcs.tasks.perloco.sources.stair_geometry import (
         static_object_transform,
         usd_meshes,
     )
-    data = np.load(directory / "replay.npz", allow_pickle=False)
+    with np.load(directory / "replay.npz", allow_pickle=False) as archive:
+        data = {key: archive[key] for key in archive.files}
     report = json.loads((directory / "report.json").read_text())
     server = viser.ViserServer(port=port)
     server.gui.add_markdown("**Geometric audit only — no SONIC, no forces.**\n\n"
@@ -291,6 +341,20 @@ def view(directory, port):
     selected = server.gui.add_dropdown("Human branch", options=names)
     human_frame = server.gui.add_slider("Human source frame", min=0, max=len(data[names[0]])-1, step=1, initial_value=0)
     robot_frame = server.gui.add_slider("Robot source frame", min=0, max=len(data["robot_pos"])-1, step=1, initial_value=0)
+    play = server.gui.add_checkbox("Play human (independent clock)", initial_value=False)
+    show_mesh = server.gui.add_checkbox("Show human mesh", initial_value=True)
+    show_labels = server.gui.add_checkbox("Show ankle / foot labels", initial_value=True)
+    mesh = None
+    if "human_faces" in data and "official_standard_vertices" in data:
+        mesh = server.scene.add_mesh_simple("/human_mesh", vertices=data["official_standard_vertices"][0],
+                                            faces=data["human_faces"], color=(150, 200, 210), opacity=.65)
+    else:
+        server.gui.add_markdown("**Old audit: mesh unavailable. Re-run audit into a NEW output directory.**")
+    labels = [server.scene.add_label(f"/foot_labels/{i}", text=text)
+              for i, text in ((7, "L ankle (7)"), (8, "R ankle (8)"),
+                              (10, "L foot joint (10)"), (11, "R foot joint (11)"))]
+    server.gui.add_markdown("Labels are anatomical joints, NOT heel/toe contact points. "
+                            "Mesh shows the actual reconstructed foot surface. No support phase is verified.")
     human = server.scene.add_point_cloud("/human", points=data[names[0]][0], colors=(30, 210, 220), point_size=.025)
     model = Entity(get_g1_flat_hand_cfg()).spec.compile()
     mjdata = mujoco.MjData(model)
@@ -311,9 +375,32 @@ def view(directory, port):
     server.gui.add_markdown("Terrain uses the ORCS USD interpretation under audit, first-frame object pose. "
                             "This view is not an independent certification of terrain transforms or contact.")
     status = server.gui.add_markdown("")
+    previous = None
+    tick = time.monotonic()
     while True:
+        now = time.monotonic()
+        if play.value:
+            steps = int((now - tick) * report["timeline"]["human_fps"])
+            if steps:
+                human_frame.value = (int(human_frame.value) + steps) % len(data[selected.value])
+                tick += steps / report["timeline"]["human_fps"]
+        else:
+            tick = now
         hi, ri = int(human_frame.value), int(robot_frame.value)
+        current = (hi, ri, selected.value, show_mesh.value, show_labels.value)
+        if current == previous:
+            time.sleep(.02)
+            continue
+        previous = current
         human.points = data[selected.value][hi]
+        for label, index in zip(labels, (7, 8, 10, 11), strict=True):
+            label.position = data[selected.value][hi, index]
+            label.visible = show_labels.value
+        if mesh is not None:
+            mesh_key = selected.value + "_vertices"
+            mesh.visible = show_mesh.value and mesh_key in data
+            if mesh_key in data:
+                mesh.vertices = data[mesh_key][hi]
         mjdata.qpos[:3] = data["robot_pos"][ri]
         mjdata.qpos[3:7] = data["robot_quat_wxyz"][ri]
         mjdata.qpos[addresses] = data["robot_dof"][ri]

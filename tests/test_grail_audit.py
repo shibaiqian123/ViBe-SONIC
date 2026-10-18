@@ -72,3 +72,26 @@ def test_official_replaces_root_transform_not_double_apply(tmp_path, root_offset
     result, _ = audit.compare_terrain(path, obj)
     assert result["all_frames_max_m"] == pytest.approx(expected, abs=1e-6)
     assert path.read_bytes() == before
+
+
+def test_foot_metrics_use_anatomical_indices_and_no_world_offset():
+    np = pytest.importorskip("numpy")
+    joints = np.zeros((4, 24, 3))
+    joints[:, [7, 8], 2] = .1
+    joints[:, [10, 11], 0] = .2
+    ankle, foot, angle, speed = audit.foot_diagnostics(joints, 30)
+    shifted = audit.foot_diagnostics(joints + [10, 20, 30], 30)
+    np.testing.assert_allclose(angle, shifted[2])
+    np.testing.assert_allclose(speed, 0)
+    assert np.all(angle < 0)
+    np.testing.assert_allclose(ankle[..., 2], .1)
+    np.testing.assert_allclose(foot[..., 2], 0)
+
+
+def test_foot_report_does_not_claim_contact(tmp_path):
+    np = pytest.importorskip("numpy")
+    audit.write_foot_diagnostics(tmp_path, {"official_standard": np.zeros((3, 24, 3))},
+                                 {"timeline": {"human_fps": 30}})
+    report = json.loads((tmp_path / "foot_diagnostics.json").read_text())
+    assert report["branches"]["official_standard"]["support_phase"] == "unverified"
+    assert len((tmp_path / "official_standard_feet.csv").read_text().splitlines()) == 7
