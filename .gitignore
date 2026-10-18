@@ -18,3 +18,5 @@ logs/
 
 # Local VS Code settings and index cache
 .vscode/
+
+/vibe/
